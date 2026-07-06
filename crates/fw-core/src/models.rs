@@ -1,4 +1,11 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::types::Json;
+use uuid::Uuid;
+
+// ============================================================
+// Enum types (match PostgreSQL ENUM types)
+// ============================================================
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "firewall_action", rename_all = "lowercase")]
@@ -10,7 +17,7 @@ pub enum FirewallAction {
     Masquerade,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "firewall_direction", rename_all = "lowercase")]
 pub enum FirewallDirection {
     In,
@@ -18,7 +25,7 @@ pub enum FirewallDirection {
     Forward,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "firewall_protocol", rename_all = "lowercase")]
 pub enum FirewallProtocol {
     Any,
@@ -32,11 +39,72 @@ pub enum FirewallProtocol {
     Sctp,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "user_role", rename_all = "lowercase")]
+pub enum UserRole {
+    Admin,
+    Operator,
+    Reporter,
+    BreakGlassOperator,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "job_status", rename_all = "lowercase")]
+pub enum JobStatus {
+    Queued,
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "job_kind", rename_all = "lowercase")]
+pub enum JobKind {
+    RuleApply,
+    RuleRemove,
+    Reboot,
+    Rollback,
+    SelfUpgrade,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "host_health_status", rename_all = "lowercase")]
+pub enum HostHealthStatus {
+    Pending,
+    Healthy,
+    Degraded,
+    Unreachable,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "cert_status", rename_all = "lowercase")]
+pub enum CertStatus {
+    Active,
+    Revoked,
+    Expired,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "policy_decision", rename_all = "snake_case")]
+pub enum PolicyDecision {
+    AutoApproved,
+    Flagged,
+    Rejected,
+    ApprovedByAdmin,
+    DeniedByAdmin,
+}
+
+// ============================================================
+// Core domain models
+// ============================================================
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct FirewallRule {
-    pub id: i64,
+    pub id: Uuid,
     pub name: String,
-    pub description: Option<String>,
+    pub description: String,
     pub action: FirewallAction,
     pub direction: FirewallDirection,
     pub protocol: FirewallProtocol,
@@ -48,98 +116,244 @@ pub struct FirewallRule {
     pub dst_port_end: Option<i32>,
     pub interface_in: Option<String>,
     pub interface_out: Option<String>,
-    pub comment: Option<String>,
+    pub comment: String,
     pub log: bool,
     pub priority: i32,
-    pub created_by: Option<i64>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_by: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct FirewallPolicySet {
-    pub id: i64,
+    pub id: Uuid,
     pub name: String,
-    pub description: Option<String>,
-    pub created_by: Option<i64>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub description: String,
+    pub created_by: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct FirewallPolicySetRule {
+    pub policy_set_id: Uuid,
+    pub rule_id: Uuid,
+    pub rule_order: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct HostPolicyAssignment {
-    pub host_id: i64,
-    pub policy_set_id: i64,
-    pub assigned_by: Option<i64>,
-    pub assigned_at: chrono::DateTime<chrono::Utc>,
+    pub host_id: Uuid,
+    pub policy_set_id: Uuid,
+    pub assigned_by: Option<Uuid>,
+    pub assigned_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct DriftSnapshot {
-    pub host_id: i64,
+    pub id: Uuid,
+    pub host_id: Uuid,
     pub snapshot_hash: String,
     pub rule_count: i32,
-    pub captured_at: chrono::DateTime<chrono::Utc>,
+    pub captured_at: DateTime<Utc>,
     pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Host {
-    pub id: i64,
+    pub id: Uuid,
     pub fqdn: String,
-    pub ip_address: Option<String>,
-    pub hostname: Option<String>,
-    pub os_info: Option<String>,
-    pub backend_active: Option<String>,
-    pub container_runtime: Option<String>,
-    pub agent_binary_hash: Option<String>,
+    pub ip_address: String,
+    pub display_name: String,
+    pub os_family: Option<String>,
+    pub os_name: Option<String>,
+    pub arch: Option<String>,
     pub agent_version: Option<String>,
+    pub health_status: HostHealthStatus,
+    pub last_health_at: Option<DateTime<Utc>>,
+    pub last_sync_at: Option<DateTime<Utc>>,
+    pub agent_port: i32,
+    pub notes: String,
+    pub registered_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    // Security columns (added by later migrations)
     pub crl_status: Option<String>,
-    pub gpg_key_status: Option<String>,
-    pub status: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub crl_age_seconds: Option<i64>,
+    pub crl_next_update: Option<DateTime<Utc>>,
+    pub container_runtime: Option<String>,
+    pub container_override: bool,
+    pub agent_binary_hash: Option<String>,
+    pub agent_min_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct User {
-    pub id: i64,
+    pub id: Uuid,
     pub username: String,
-    pub email: Option<String>,
-    pub role: String,
-    pub enabled: bool,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub display_name: String,
+    pub email: String,
+    pub role: UserRole,
+    pub auth_provider: String,
+    pub mfa_enabled: bool,
+    pub is_active: bool,
+    pub force_password_reset: bool,
+    pub last_login_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub failed_login_attempts: i32,
+    pub locked_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Group {
-    pub id: i64,
+    pub id: Uuid,
     pub name: String,
-    pub description: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub description: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct FirewallJob {
-    pub id: i64,
-    pub job_kind: String,
-    pub policy_set_id: Option<i64>,
-    pub status: String,
-    pub created_by: Option<i64>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub id: Uuid,
+    pub kind: JobKind,
+    pub status: JobStatus,
+    pub created_by_user_id: Option<Uuid>,
+    pub parent_job_id: Option<Uuid>,
+    pub maintenance_window_id: Option<Uuid>,
+    pub immediate: bool,
+    pub policy_set_id: Option<Uuid>,
+    pub notes: String,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub scheduled_for: Option<DateTime<Utc>>,
+    pub auto_apply: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct FirewallJobHost {
-    pub job_id: i64,
-    pub host_id: i64,
-    pub status: String,
+    pub id: Uuid,
+    pub job_id: Uuid,
+    pub host_id: Uuid,
+    pub status: JobStatus,
+    pub agent_job_id: Option<String>,
+    pub retry_count: i32,
+    pub output: String,
     pub error_message: Option<String>,
-    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Certificate {
+    pub id: Uuid,
+    pub host_id: Option<Uuid>,
+    pub serial_number: String,
+    pub common_name: String,
+    pub status: CertStatus,
+    pub issued_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub cert_pem: String,
+    pub ca_tier: String,
+    pub parent_cert_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct MaintenanceWindow {
+    pub id: Uuid,
+    pub host_id: Uuid,
+    pub label: String,
+    pub recurrence: String,
+    pub start_at: DateTime<Utc>,
+    pub duration_minutes: i32,
+    pub recurrence_day: Option<i32>,
+    pub enabled: bool,
+    pub auto_apply: bool,
+    pub notify_before_minutes: Option<i32>,
+    pub last_triggered_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ============================================================
+// Security models
+// ============================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ProtectedCidr {
+    pub host_id: Uuid,
+    pub cidr: String,
+    pub label: String,
+    pub created_by: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct RulePolicyDecision {
+    pub id: Uuid,
+    pub rule_id: Option<Uuid>,
+    pub policy_set_id: Option<Uuid>,
+    pub decision: PolicyDecision,
+    pub reason: String,
+    pub reviewer_id: Option<Uuid>,
+    pub reviewed_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct EnrollmentToken {
+    pub token_hash: String,
+    pub host_fqdn: String,
+    pub host_ip: Option<String>,
+    pub created_by: Uuid,
+    pub expires_at: DateTime<Utc>,
+    pub used_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct EnrollmentRequest {
+    pub id: Uuid,
+    pub machine_id: String,
+    pub fqdn: String,
+    pub ip_address: String,
+    pub hostname: Option<String>,
+    pub os_details: Json<serde_json::Value>,
+    pub polling_token: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct AuditAnchor {
+    pub id: Uuid,
+    pub chain_head: String,
+    pub anchored_at: DateTime<Utc>,
+    pub anchor_type: String,
+    pub anchor_ref: String,
+    pub verified_at: Option<DateTime<Utc>>,
+    pub verified_ok: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct HostApplyLock {
+    pub host_id: Uuid,
+    pub locked_by_job: Option<Uuid>,
+    pub locked_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct OperatorHostGroup {
+    pub user_id: Uuid,
+    pub group_id: Uuid,
+    pub assigned_at: DateTime<Utc>,
+}
+
+// ============================================================
+// PKI / enrollment bundles (not DB tables — wire types)
+// ============================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PkiBundle {
@@ -155,46 +369,4 @@ pub struct RepoConfig {
     pub sources_config: serde_json::Value,
     pub distro_id: String,
     pub keyring_path: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnrollmentRequest {
-    pub id: i64,
-    pub fqdn: String,
-    pub ip_address: Option<String>,
-    pub hostname: Option<String>,
-    pub os_details: Option<String>,
-    pub status: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProtectedCidr {
-    pub host_id: i64,
-    pub cidr: String,
-    pub label: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "policy_decision", rename_all = "lowercase")]
-pub enum PolicyDecision {
-    AutoApproved,
-    Flagged,
-    Rejected,
-    ApprovedByAdmin,
-    DeniedByAdmin,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct RulePolicyDecision {
-    pub id: i64,
-    pub rule_id: Option<i64>,
-    pub policy_set_id: Option<i64>,
-    pub decision: PolicyDecision,
-    pub reason: Option<String>,
-    pub reviewer_id: Option<i64>,
-    pub reviewed_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
 }

@@ -1,4 +1,4 @@
-use crate::models::FirewallRule;
+use crate::models::{FirewallAction, FirewallRule};
 
 #[derive(Debug, Clone)]
 pub struct PolicyCheckResult {
@@ -8,14 +8,13 @@ pub struct PolicyCheckResult {
 }
 
 pub fn check_rule(rule: &FirewallRule) -> PolicyCheckResult {
-    if rule.action == crate::models::FirewallAction::Allow {
+    if rule.action == FirewallAction::Allow {
         let is_broad_src = rule
             .src_cidr
             .as_ref()
             .map(|c| c == "0.0.0.0/0" || c == "::/0" || c == "any")
             .unwrap_or(true);
-        let is_broad_dst_port = rule.dst_port_start.is_none()
-            || (rule.dst_port_start.is_none() && rule.dst_port_end.is_none());
+        let is_broad_dst_port = rule.dst_port_start.is_none() && rule.dst_port_end.is_none();
 
         if is_broad_src && is_broad_dst_port {
             return PolicyCheckResult {
@@ -38,9 +37,7 @@ pub fn check_against_protected_cidrs(
     rule: &FirewallRule,
     protected_cidrs: &[String],
 ) -> PolicyCheckResult {
-    if rule.action == crate::models::FirewallAction::Deny
-        || rule.action == crate::models::FirewallAction::Reject
-    {
+    if rule.action == FirewallAction::Deny || rule.action == FirewallAction::Reject {
         if let Some(src) = &rule.src_cidr {
             for protected in protected_cidrs {
                 if cidr_overlaps(src, protected) {

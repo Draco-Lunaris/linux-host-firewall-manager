@@ -1,5 +1,6 @@
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct IntegrityResult {
@@ -8,10 +9,11 @@ pub struct IntegrityResult {
     pub total_rows: u64,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn log_event(
     pool: &PgPool,
     action: &str,
-    actor_user_id: Option<i64>,
+    actor_user_id: Option<Uuid>,
     actor_username: Option<&str>,
     target_type: Option<&str>,
     target_id: Option<&str>,
@@ -75,14 +77,26 @@ pub async fn log_event(
 }
 
 pub async fn verify_integrity(pool: &PgPool) -> Result<IntegrityResult, crate::error::AppError> {
-    let rows: Vec<(i64, String, String, String, Option<i64>, Option<String>, Option<String>, Option<String>, serde_json::Value, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)> =
-        sqlx::query_as(
-            "SELECT id, action, row_hash, prev_hash, actor_user_id, actor_username, target_type, target_id, details, ip_address, request_id, created_at
-             FROM audit_log ORDER BY id",
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(|e| crate::error::AppError::Database(e))?;
+    let rows: Vec<(
+        i64,
+        String,
+        String,
+        String,
+        Option<Uuid>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        serde_json::Value,
+        Option<String>,
+        Option<String>,
+        chrono::DateTime<chrono::Utc>,
+    )> = sqlx::query_as(
+        "SELECT id, action, row_hash, prev_hash, actor_user_id, actor_username, target_type, target_id, details, ip_address, request_id, created_at
+         FROM audit_log ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| crate::error::AppError::Database(e))?;
 
     let mut mismatched = Vec::new();
     let mut prev = String::new();

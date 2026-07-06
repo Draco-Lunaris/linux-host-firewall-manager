@@ -1,0 +1,17 @@
+-- Migration: 019_enrollment_requests
+-- Description: Create enrollment_requests table for host self-enrollment
+-- Forked from LPM 016 + 017 + 018.
+
+CREATE TABLE IF NOT EXISTS enrollment_requests (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    machine_id      TEXT NOT NULL UNIQUE,
+    fqdn            TEXT NOT NULL,
+    ip_address      INET NOT NULL,
+    hostname        TEXT,
+    os_details      JSONB NOT NULL DEFAULT '{}',
+    polling_token   TEXT NOT NULL UNIQUE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at      TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '24 hours'
+);
+CREATE INDEX IF NOT EXISTS idx_enrollment_requests_token ON enrollment_requests (polling_token);
+CREATE INDEX IF NOT EXISTS idx_enrollment_requests_expires ON enrollment_requests (expires_at);
