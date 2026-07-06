@@ -2,6 +2,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum JwtError {
+    #[error("token expired")]
+    Expired,
     #[error("encode error: {0}")]
     Encode(String),
     #[error("decode error: {0}")]
@@ -30,6 +32,8 @@ pub enum SessionError {
     MfaRequired,
     #[error("invalid mfa code")]
     InvalidMfa,
+    #[error("token revoked")]
+    TokenRevoked,
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
 }

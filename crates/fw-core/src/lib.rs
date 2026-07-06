@@ -9,3 +9,4 @@ pub mod request_id;
 
 pub use config::AppConfig;
 pub use error::{ApiResult, AppError, ErrorResponse};
+pub use request_id::request_id_middleware;

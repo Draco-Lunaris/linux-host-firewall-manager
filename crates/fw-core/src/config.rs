@@ -18,49 +18,74 @@ pub struct DatabaseConfig {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    #[serde(default = "default_static_dir")]
+    pub static_dir: String,
+}
+
+fn default_static_dir() -> String {
+    "/usr/share/firewall-manager/frontend".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SecurityConfig {
+    #[serde(default)]
     pub ip_whitelist: Vec<String>,
     pub jwt_signing_key_path: String,
     pub jwt_verify_key_path: String,
+    #[serde(default)]
     pub trusted_proxies: Vec<String>,
+    #[serde(default)]
     pub allowed_origins: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkerConfig {
+    #[serde(default = "default_max_concurrent")]
     pub max_concurrent_agent_calls: usize,
+    #[serde(default = "default_health_poll")]
     pub health_poll_interval_secs: u64,
+    #[serde(default = "default_drift_poll")]
     pub drift_poll_interval_secs: u64,
+}
+
+fn default_max_concurrent() -> usize {
+    64
+}
+fn default_health_poll() -> u64 {
+    300
+}
+fn default_drift_poll() -> u64 {
+    900
 }
 
 impl Default for WorkerConfig {
     fn default() -> Self {
         Self {
-            max_concurrent_agent_calls: 64,
-            health_poll_interval_secs: 300,
-            drift_poll_interval_secs: 900,
+            max_concurrent_agent_calls: default_max_concurrent(),
+            health_poll_interval_secs: default_health_poll(),
+            drift_poll_interval_secs: default_drift_poll(),
         }
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct RateLimitConfig {
+    #[serde(default = "default_enrollment_burst")]
     pub enrollment_burst: u32,
+    #[serde(default = "default_auth_burst")]
     pub auth_burst: u32,
+    #[serde(default = "default_api_burst")]
     pub api_burst: u32,
 }
 
-impl Default for RateLimitConfig {
-    fn default() -> Self {
-        Self {
-            enrollment_burst: 3,
-            auth_burst: 10,
-            api_burst: 30,
-        }
-    }
+fn default_enrollment_burst() -> u32 {
+    3
+}
+fn default_auth_burst() -> u32 {
+    10
+}
+fn default_api_burst() -> u32 {
+    30
 }
 
 impl AppConfig {
