@@ -1,0 +1,63 @@
+use chrono::{Duration, Utc};
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use serde::{Deserialize, Serialize};
+
+const DEFAULT_ACCESS_TTL_SECS: i64 = 900;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccessClaims {
+    pub sub: i64,
+    pub iat: i64,
+    pub exp: i64,
+    pub jti: String,
+    pub role: String,
+    pub username: String,
+}
+
+pub fn issue_access_token(
+    signing_key_pem: &str,
+    user_id: i64,
+    role: &str,
+    username: &str,
+) -> Result<(String, String), crate::error::JwtError> {
+    let now = Utc::now().timestamp();
+    let jti = uuid::Uuid::new_v4().to_string();
+    let claims = AccessClaims {
+        sub: user_id,
+        iat: now,
+        exp: now + DEFAULT_ACCESS_TTL_SECS,
+        jti: jti.clone(),
+        role: role.to_string(),
+        username: username.to_string(),
+    };
+    let key = EncodingKey::from_ed_pem(signing_key_pem.as_bytes())
+        .map_err(|e| crate::error::JwtError::Encode(e.to_string()))?;
+    let token = encode(&Header::new(Algorithm::EdDSA), &claims, &key)
+        .map_err(|e| crate::error::JwtError::Encode(e.to_string()))?;
+    Ok((token, jti))
+}
+
+pub fn validate_access_token(
+    verify_key_pem: &str,
+    token: &str,
+) -> Result<AccessClaims, crate::error::JwtError> {
+    let key = DecodingKey::from_ed_pem(verify_key_pem.as_bytes())
+        .map_err(|e| crate::error::JwtError::Decode(e.to_string()))?;
+    let mut validation = Validation::new(Algorithm::EdDSA);
+    validation.leeway = 5;
+    let data = decode::<AccessClaims>(token, &key, &validation)
+        .map_err(|e| crate::error::JwtError::Decode(e.to_string()))?;
+    Ok(data.claims)
+}
+
+pub fn load_signing_key(path: &str) -> Result<String, crate::error::JwtError> {
+    std::fs::read_to_string(path).map_err(|e| crate::error::JwtError::KeyLoad(e.to_string()))
+}
+
+pub fn load_verify_key(path: &str) -> Result<String, crate::error::JwtError> {
+    std::fs::read_to_string(path).map_err(|e| crate::error::JwtError::KeyLoad(e.to_string()))
+}
+
+pub fn _unused() -> Duration {
+    Duration::seconds(DEFAULT_ACCESS_TTL_SECS)
+}

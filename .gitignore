@@ -1,0 +1,12 @@
+/target
+*.deb
+node_modules/
+frontend/dist/
+*.key
+*.key.pem
+*.pem
+!config/config.example.toml
+.env
+.env.local
+*.log
+.DS_Store

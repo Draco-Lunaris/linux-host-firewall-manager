@@ -1,0 +1,25 @@
+title = "Linux Firewall Manager Configuration"
+
+[database]
+url = "postgres://firewall_manager:your_secure_password@localhost/firewall_manager"
+
+[server]
+host = "0.0.0.0"
+port = 443
+
+[security]
+ip_whitelist = []
+trusted_proxies = []
+allowed_origins = []
+jwt_signing_key_path = "/etc/firewall-manager/jwt/signing.pem"
+jwt_verify_key_path = "/etc/firewall-manager/jwt/verify.pem"
+
+[worker]
+max_concurrent_agent_calls = 64
+health_poll_interval_secs = 300
+drift_poll_interval_secs = 900
+
+[rate_limit]
+enrollment_burst = 3
+auth_burst = 10
+api_burst = 30

@@ -1,0 +1,21 @@
+[package]
+name = "fw-ca"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+fw-core = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+rcgen = { workspace = true }
+pem = { workspace = true }
+time = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+tokio = { workspace = true }
+async-trait = "0.1"

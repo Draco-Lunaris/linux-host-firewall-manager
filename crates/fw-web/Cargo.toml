@@ -1,0 +1,54 @@
+[package]
+name = "fw-web"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+fw-core = { workspace = true }
+fw-auth = { workspace = true }
+fw-ca = { workspace = true }
+fw-agent-client = { workspace = true }
+fw-reports = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+ulid = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+axum-server = { workspace = true }
+axum-extra = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tower_governor = { workspace = true }
+governor = { workspace = true }
+reqwest = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+argon2 = { workspace = true }
+jsonwebtoken = { workspace = true }
+rand = { workspace = true }
+totp-rs = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
+regex = { workspace = true }
+ipnet = { workspace = true }
+lettre = { workspace = true }
+dashmap = "6"
+x509-parser = "0.16"
+urlencoding = "2"
+async-trait = "0.1"
+
+[[bin]]
+name = "fw-web"
+path = "src/main.rs"

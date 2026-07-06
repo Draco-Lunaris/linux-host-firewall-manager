@@ -1,0 +1,29 @@
+[package]
+name = "fw-worker"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+fw-core = { workspace = true }
+fw-auth = { workspace = true }
+fw-agent-client = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+lettre = { workspace = true }
+dashmap = "6"
+anyhow = { workspace = true }
+async-trait = "0.1"
+
+[[bin]]
+name = "fw-worker"
+path = "src/main.rs"
