@@ -4,11 +4,20 @@ set -euo pipefail
 # Build script for Linux Host Firewall Manager .deb package
 # Mirrors the Linux-Patch-Manager build pattern.
 
-VERSION="0.1.0"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${PROJECT_ROOT}"
+
+# Ensure Rust toolchain is in PATH
+if [ -f "$HOME/.cargo/env" ]; then
+    . "$HOME/.cargo/env"
+fi
+
+# Read version from Cargo.toml workspace section
+VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*=.*"\(.*\)"/\1/')
 RELEASE="1"
 PACKAGE_NAME="linux-firewall-manager"
-BUILD_DIR="package-build"
 DEB_FILE="${PACKAGE_NAME}_${VERSION}-${RELEASE}_amd64.deb"
+BUILD_DIR="${PROJECT_ROOT}/package-build"
 
 echo "=== Building ${PACKAGE_NAME} v${VERSION}-${RELEASE} ==="
 
@@ -23,7 +32,7 @@ strip target/release/migrate-secrets
 # Step 2: Build frontend
 echo "--- Building frontend ---"
 cd frontend
-npm ci --production
+npm ci
 npm run build
 cd ..
 

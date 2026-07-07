@@ -84,8 +84,29 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: cd frontend && npm ci && npm run build
-      - run: cargo build --release
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libssl-dev libfontconfig1-dev dpkg-dev
+      - name: Build frontend
+        run: cd frontend && npm ci && npm run build
+      - name: Build Rust release
+        run: cargo build --release
+      - name: Run tests
+        run: cargo test --workspace --all-features
+      - name: Strip binaries
+        run: |
+          strip target/release/fw-web target/release/fw-worker \
+            target/release/fw-agent target/release/migrate-secrets
+      - name: Build .deb package
+        run: |
+          chmod +x scripts/build-package.sh
+          scripts/build-package.sh
+      - name: Verify package
+        run: |
+          ls -la *.deb
+          dpkg-deb -I linux-firewall-manager_*.deb
       - name: Generate release notes
         run: |
           echo "## Release ${GITHUB_REF#refs/tags/}" > release-notes.md
@@ -95,6 +116,4 @@ jobs:
         with:
           body_path: release-notes.md
           files: |
-            target/release/fw-web
-            target/release/fw-worker
-            target/release/fw-agent
+            linux-firewall-manager_*.deb
