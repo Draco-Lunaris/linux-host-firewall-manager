@@ -25,8 +25,8 @@ export default function RulesPage() {
     try {
       const resp = await rulesApi.list()
       setRules(resp.data.rules)
-    } catch (e: any) {
-      setError(e.response?.data?.error?.message || "Failed to load rules")
+    } catch (e: unknown) {
+      setError((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Failed to load rules")
     }
     
   }
@@ -37,8 +37,8 @@ export default function RulesPage() {
     try {
       const resp = await rulesApi.validate(rule.id)
       setValidationResults({ ...validationResults, [rule.id]: resp.data })
-    } catch (e: any) {
-      setError(e.response?.data?.error?.message || "Validation failed")
+    } catch (e: unknown) {
+      setError((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Validation failed")
     }
   }
 
@@ -47,8 +47,8 @@ export default function RulesPage() {
     try {
       await rulesApi.delete(id)
       loadRules()
-    } catch (e: any) {
-      setError(e.response?.data?.error?.message || "Delete failed")
+    } catch (e: unknown) {
+      setError((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Delete failed")
     }
   }
 
@@ -145,8 +145,8 @@ function RuleDialog({ open, onClose, editingRule }: { open: boolean; onClose: ()
         await rulesApi.create(form)
       }
       onClose()
-    } catch (e: any) {
-      setError(e.response?.data?.error?.message || "Failed to save rule")
+    } catch (e: unknown) {
+      setError((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Failed to save rule")
     }
   }
 
@@ -158,9 +158,9 @@ function RuleDialog({ open, onClose, editingRule }: { open: boolean; onClose: ()
         <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2, mt: 1 }}>
           <TextField label="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} fullWidth required />
           <TextField label="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} fullWidth />
-          <FormControl fullWidth><InputLabel>Action</InputLabel><Select value={form.action} onChange={(e) => setForm({ ...form, action: e.target.value as any })}>{ACTIONS.map(a => <MenuItem key={a} value={a}>{a}</MenuItem>)}</Select></FormControl>
-          <FormControl fullWidth><InputLabel>Direction</InputLabel><Select value={form.direction} onChange={(e) => setForm({ ...form, direction: e.target.value as any })}>{DIRECTIONS.map(d => <MenuItem key={d} value={d}>{d}</MenuItem>)}</Select></FormControl>
-          <FormControl fullWidth><InputLabel>Protocol</InputLabel><Select value={form.protocol} onChange={(e) => setForm({ ...form, protocol: e.target.value as any })}>{PROTOCOLS.map(p => <MenuItem key={p} value={p}>{p}</MenuItem>)}</Select></FormControl>
+          <FormControl fullWidth><InputLabel>Action</InputLabel><Select value={form.action} onChange={(e) => setForm({ ...form, action: e.target.value as FirewallRule["action"] })}>{ACTIONS.map(a => <MenuItem key={a} value={a}>{a}</MenuItem>)}</Select></FormControl>
+          <FormControl fullWidth><InputLabel>Direction</InputLabel><Select value={form.direction} onChange={(e) => setForm({ ...form, direction: e.target.value as FirewallRule["direction"] })}>{DIRECTIONS.map(d => <MenuItem key={d} value={d}>{d}</MenuItem>)}</Select></FormControl>
+          <FormControl fullWidth><InputLabel>Protocol</InputLabel><Select value={form.protocol} onChange={(e) => setForm({ ...form, protocol: e.target.value as FirewallRule["protocol"] })}>{PROTOCOLS.map(p => <MenuItem key={p} value={p}>{p}</MenuItem>)}</Select></FormControl>
           <TextField label="Source CIDR" value={form.src_cidr || ""} onChange={(e) => setForm({ ...form, src_cidr: e.target.value || null })} placeholder="0.0.0.0/0" fullWidth />
           <TextField label="Source Port Start" type="number" value={form.src_port_start ?? ""} onChange={(e) => setForm({ ...form, src_port_start: e.target.value ? Number(e.target.value) : null })} fullWidth />
           <TextField label="Source Port End" type="number" value={form.src_port_end ?? ""} onChange={(e) => setForm({ ...form, src_port_end: e.target.value ? Number(e.target.value) : null })} fullWidth />

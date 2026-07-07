@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! CSR-based enrollment client (SEC-002).
 //!
 //! Flow:
@@ -11,7 +12,7 @@
 
 use anyhow::{Context, Result};
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 const CERT_NAMES: &[(&str, &str)] = &[
     ("ca.pem", "CA certificate (root + intermediate chain)"),

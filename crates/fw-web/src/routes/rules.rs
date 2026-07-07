@@ -3,16 +3,13 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    middleware::Next,
-    response::Response,
-    routing::{get, post, put},
+    routing::{get, post},
     Json, Router,
 };
 use fw_auth::rbac::AuthUser;
 use fw_core::models::{FirewallAction, FirewallDirection, FirewallProtocol, FirewallRule};
-use fw_core::policy::{check_against_protected_cidrs, check_rule, PolicyCheckResult};
+use fw_core::policy::{check_against_protected_cidrs, check_rule};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::AppState;

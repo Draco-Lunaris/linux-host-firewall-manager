@@ -1,3 +1,4 @@
+#![allow(clippy::type_complexity)]
 //! Auth routes — login, refresh, logout, MFA setup.
 
 use axum::{
@@ -59,7 +60,7 @@ async fn login(
         .bind(&req.username)
         .fetch_optional(&state.db)
         .await
-        .map_err(|e| fw_core::AppError::Database(e))?;
+        .map_err(fw_core::AppError::Database)?;
 
     let (
         user_id,
@@ -213,7 +214,7 @@ async fn refresh_token(
     .bind(&hash)
     .fetch_optional(&state.db)
     .await
-    .map_err(|e| fw_core::AppError::Database(e))?;
+    .map_err(fw_core::AppError::Database)?;
 
     let (user_id, username, role, revoked) =
         row.ok_or_else(|| fw_core::AppError::Unauthorized("Invalid refresh token".to_string()))?;

@@ -3,7 +3,7 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, get, post, put},
+    routing::{delete, get},
     Json, Router,
 };
 use fw_auth::rbac::AuthUser;

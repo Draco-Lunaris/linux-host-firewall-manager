@@ -1,9 +1,9 @@
+#![allow(dead_code)]
 //! Agent HTTPS server with mTLS.
 
 use crate::backend::{self, FirewallBackend};
 use crate::config::AgentConfig;
 use crate::mtls;
-use crate::protected_cidrs;
 use crate::routes;
 use crate::safe_mode::SafeModeState;
 use anyhow::{Context, Result};
@@ -46,7 +46,7 @@ pub async fn run() -> Result<()> {
         .add(certs.ca_cert.clone())
         .context("Failed to add CA cert to root store")?;
 
-    let client_verifier = WebPkiClientVerifier::builder(Arc::new(root_store))
+    let _client_verifier = WebPkiClientVerifier::builder(Arc::new(root_store))
         .build()
         .context("Failed to build client verifier")?;
 

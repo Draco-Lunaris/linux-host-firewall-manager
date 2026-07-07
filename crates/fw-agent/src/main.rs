@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+#![allow(clippy::too_many_arguments)]
 mod backend;
 mod compiler;
 mod config;

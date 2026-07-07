@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Safe mode (SEC-006).
 //!
 //! If the agent cannot reach the manager for N minutes (configurable,

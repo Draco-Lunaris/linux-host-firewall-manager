@@ -21,7 +21,7 @@ async fn poll_drift(db: &PgPool) -> Result<(), sqlx::Error> {
     .fetch_all(db)
     .await?;
 
-    for (host_id, fqdn, ip) in hosts {
+    for (host_id, fqdn, _ip) in hosts {
         // In production: call fw_agent_client::AgentClient::get_snapshot()
         // For now, stub — just log
         tracing::debug!(host = %host_id, fqdn = %fqdn, "Checking drift for host");

@@ -3,7 +3,7 @@
 use sqlx::PgPool;
 use std::sync::Arc;
 
-pub async fn run(db: Arc<PgPool>) {
+pub async fn run(_db: Arc<PgPool>) {
     // In production: use sqlx::postgres::PgListener to listen for:
     // - job_enqueued: wake job executor
     // - refresh_requested: reload config

@@ -5,12 +5,20 @@ import {
   CircularProgress, Stepper, Step, StepLabel,
 } from "@mui/material"
 import { RocketLaunch as DeployIcon, Preview as PreviewIcon } from "@mui/icons-material"
-import { policySetsApi, deploymentApi, type FirewallPolicySet } from "../api/client"
-import { hostsApi } from "../api/client"
+import { policySetsApi, deploymentApi, hostsApi, type FirewallPolicySet } from "../api/client"
+
+interface HostInfo {
+  id: string
+  fqdn: string
+  ip_address: string
+  health_status: string
+  backend_active?: string
+  os_family?: string
+}
 
 export default function DeploymentPage() {
   const [policySets, setPolicySets] = useState<FirewallPolicySet[]>([])
-  const [hosts, setHosts] = useState<any[]>([])
+  const [hosts, setHosts] = useState<HostInfo[]>([])
   const [selectedPolicySet, setSelectedPolicySet] = useState<string>("")
   const [selectedHosts, setSelectedHosts] = useState<Set<string>>(new Set())
   const [deploying, setDeploying] = useState(false)
@@ -26,8 +34,8 @@ export default function DeploymentPage() {
         ])
         setPolicySets(psResp.data.policy_sets)
         setHosts(hostResp.data)
-      } catch (e: any) {
-        setError(e.response?.data?.error?.message || "Failed to load data")
+      } catch (e: unknown) {
+        setError((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Failed to load data")
       }
     }
     load()
@@ -48,8 +56,8 @@ export default function DeploymentPage() {
     try {
       const resp = await deploymentApi.deploy(selectedPolicySet, Array.from(selectedHosts), true)
       setResult(`Job ${resp.data.job_id} created for ${resp.data.host_count} hosts. Status: ${resp.data.status}`)
-    } catch (e: any) {
-      setError(e.response?.data?.error?.message || "Deploy failed")
+    } catch (e: unknown) {
+      setError((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Deploy failed")
     }
     setDeploying(false)
   }

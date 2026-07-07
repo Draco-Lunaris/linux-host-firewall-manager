@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Protected CIDR enforcement (SEC-006).
 //!
 //! The agent rejects any rule that would block a protected CIDR
@@ -65,9 +66,6 @@ pub fn auto_detect_manager_cidr(manager_url: &str) -> Option<String> {
     let host = parsed.host_str()?;
     // Resolve hostname to IP
     use std::net::ToSocketAddrs;
-    let addrs = format!("{}:443", host).to_socket_addrs().ok()?;
-    for addr in addrs {
-        return Some(addr.ip().to_string());
-    }
-    None
+    let mut addrs = format!("{}:443", host).to_socket_addrs().ok()?;
+    addrs.next().map(|addr| addr.ip().to_string())
 }

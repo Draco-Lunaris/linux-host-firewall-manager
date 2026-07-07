@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Firewall backend abstraction.
 //!
 //! The agent detects which backend is active on the host and uses it

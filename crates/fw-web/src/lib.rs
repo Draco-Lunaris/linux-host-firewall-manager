@@ -1,3 +1,4 @@
+#![allow(clippy::type_complexity)]
 //! fw-web — Linux Host Firewall Manager web server (library crate).
 
 pub mod routes;
@@ -178,7 +179,7 @@ pub fn build_router(state: AppState) -> Router<()> {
 }
 
 /// Construct the package repository router (served on plain HTTP port 80).
-pub fn build_repo_router(state: &AppState) -> Router {
+pub fn build_repo_router(_state: &AppState) -> Router {
     let repo_dir = "/var/www/firewall-agent-repo";
     Router::new()
         .nest_service("/apt", ServeDir::new(format!("{repo_dir}/apt")))

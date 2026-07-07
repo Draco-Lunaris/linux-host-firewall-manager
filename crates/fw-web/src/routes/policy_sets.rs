@@ -3,13 +3,12 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, get, post, put},
+    routing::{delete, get, post},
     Json, Router,
 };
 use fw_auth::rbac::AuthUser;
 use fw_core::models::{
-    FirewallAction, FirewallDirection, FirewallPolicySet, FirewallPolicySetRule, FirewallProtocol,
-    FirewallRule,
+    FirewallAction, FirewallDirection, FirewallPolicySet, FirewallProtocol, FirewallRule,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -310,9 +309,8 @@ async fn preview_compilation(
     .fetch_all(&state.db)
     .await?;
 
-    let ufw_commands: Vec<String> = rules.iter().map(|r| compile_ufw_command(r)).collect();
-    let firewalld_commands: Vec<String> =
-        rules.iter().map(|r| compile_firewalld_command(r)).collect();
+    let ufw_commands: Vec<String> = rules.iter().map(compile_ufw_command).collect();
+    let firewalld_commands: Vec<String> = rules.iter().map(compile_firewalld_command).collect();
 
     Ok(Json(PreviewCompilationResponse {
         ufw_commands,

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Drift detection — compare current rules to last known snapshot.
 
 use sha2::{Digest, Sha256};

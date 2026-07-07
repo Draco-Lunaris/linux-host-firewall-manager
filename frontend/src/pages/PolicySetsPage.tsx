@@ -20,8 +20,8 @@ export default function PolicySetsPage() {
     try {
       const resp = await policySetsApi.list()
       setPolicySets(resp.data.policy_sets)
-    } catch (e: any) {
-      setError(e.response?.data?.error?.message || "Failed to load policy sets")
+    } catch (e: unknown) {
+      setError((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Failed to load policy sets")
     }
     
   }
@@ -30,7 +30,7 @@ export default function PolicySetsPage() {
 
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this policy set?")) return
-    try { await policySetsApi.delete(id); load() } catch (e: any) { setError(e.response?.data?.error?.message) }
+    try { await policySetsApi.delete(id); load() } catch (e: unknown) { setError((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? null) }
   }
 
   return (
@@ -66,12 +66,12 @@ function PolicySetAccordion({ policySet, onEdit, onDelete }: { policySet: Firewa
     try {
       const resp = await policySetsApi.preview(policySet.id)
       setPreview(resp.data)
-    } catch (e: any) {
-      alert(e.response?.data?.error?.message || "Preview failed")
+    } catch (e: unknown) {
+      alert((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Preview failed")
     }
   }
 
-  useEffect(() => { if (expanded) loadRules() }, [expanded])
+  useEffect(() => { if (expanded) loadRules() }, [expanded]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <Accordion expanded={expanded} onChange={() => setExpanded(!expanded)} sx={{ mb: 1 }}>
@@ -134,7 +134,7 @@ function PolicySetDialog({ open, onClose, editingSet }: { open: boolean; onClose
       if (editingSet) { await policySetsApi.update(editingSet.id, { name, description }) }
       else { await policySetsApi.create({ name, description }) }
       onClose()
-    } catch (e: any) { setError(e.response?.data?.error?.message || "Failed to save") }
+    } catch (e: unknown) { setError((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Failed to save") }
   }
 
   return (

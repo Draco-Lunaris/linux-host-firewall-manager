@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -96,7 +98,7 @@ pub async fn verify_integrity(pool: &PgPool) -> Result<IntegrityResult, crate::e
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| crate::error::AppError::Database(e))?;
+    .map_err(crate::error::AppError::Database)?;
 
     let mut mismatched = Vec::new();
     let mut prev = String::new();

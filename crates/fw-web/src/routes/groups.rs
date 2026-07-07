@@ -4,7 +4,7 @@ use crate::AppState;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, get, post},
+    routing::{get, post},
     Json, Router,
 };
 use fw_auth::rbac::AuthUser;

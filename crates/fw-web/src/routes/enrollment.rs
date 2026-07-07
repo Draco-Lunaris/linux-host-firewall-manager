@@ -146,7 +146,7 @@ async fn poll_enrollment_status(
     .await?;
 
     match row {
-        Some((id, fqdn)) => {
+        Some((_id, _fqdn)) => {
             // Check if approved
             if let Some(entry) = state.approved_enrollments.get(&hash) {
                 let bundle = entry.pki_bundle.clone();

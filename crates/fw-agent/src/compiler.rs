@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Rule compiler — converts typed FirewallRule to backend-specific command strings.
 
 use fw_core::models::{FirewallAction, FirewallDirection, FirewallProtocol, FirewallRule};

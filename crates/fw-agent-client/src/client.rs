@@ -1,3 +1,4 @@
+#![allow(clippy::redundant_closure)]
 use crate::error::AgentClientError;
 use crate::types::{AgentEnvelope, ApplyResult, HealthResponse, RuleSnapshot, SystemInfo};
 use reqwest::Client;

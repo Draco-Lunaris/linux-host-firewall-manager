@@ -1,12 +1,7 @@
 //! Settings — IP whitelist, trusted proxies, OIDC, SMTP.
 
 use crate::AppState;
-use axum::{
-    extract::State,
-    http::StatusCode,
-    routing::{get, put},
-    Json, Router,
-};
+use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
 use fw_auth::rbac::AuthUser;
 
 pub fn router() -> Router<std::sync::Arc<AppState>> {
@@ -111,7 +106,7 @@ async fn get_oidc_config(
 async fn update_oidc_config(
     State(state): State<std::sync::Arc<AppState>>,
     auth: AuthUser,
-    Json(req): Json<serde_json::Value>,
+    Json(_req): Json<serde_json::Value>,
 ) -> Result<StatusCode, fw_core::AppError> {
     if !auth.role.is_admin() {
         return Err(fw_core::AppError::Forbidden(

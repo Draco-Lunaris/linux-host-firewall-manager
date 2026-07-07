@@ -1,3 +1,4 @@
+#![allow(clippy::should_implement_trait)]
 //! Role-Based Access Control (RBAC) middleware for Axum.
 //!
 //! Provides:
@@ -42,7 +43,7 @@ pub enum UserRole {
 }
 
 impl UserRole {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_role(s: &str) -> Option<Self> {
         match s {
             "admin" => Some(Self::Admin),
             "operator" => Some(Self::Operator),
@@ -219,7 +220,7 @@ pub async fn require_auth(auth_config: Arc<AuthConfig>, mut req: Request, next: 
         }
     };
 
-    let role = match UserRole::from_str(&claims.role) {
+    let role = match UserRole::parse_role(&claims.role) {
         Some(r) => r,
         None => return unauthorized("Invalid role in token"),
     };
@@ -285,10 +286,7 @@ pub async fn is_jti_revoked(pool: &sqlx::PgPool, jti: &str) -> bool {
             .ok()
             .flatten();
 
-    match result {
-        Some(revoked) => revoked,
-        None => true, // jti not found = treat as revoked (fail-closed)
-    }
+    result.unwrap_or(true) // jti not found = treat as revoked (fail-closed)
 }
 
 /// Check if an operator can access a specific host (SEC-012).
