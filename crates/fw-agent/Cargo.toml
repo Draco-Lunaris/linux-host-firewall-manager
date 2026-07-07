@@ -32,6 +32,10 @@ rand = { workspace = true }
 toml = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 async-trait = "0.1"
+rcgen = { workspace = true }
+url = { workspace = true }
+hostname = "0.4"
+ipnet = { workspace = true }
 
 [[bin]]
 name = "fw-agent"

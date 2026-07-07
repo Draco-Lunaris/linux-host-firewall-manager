@@ -17,6 +17,18 @@ pub enum FirewallAction {
     Masquerade,
 }
 
+impl FirewallAction {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+            Self::Reject => "reject",
+            Self::Limit => "limit",
+            Self::Masquerade => "masquerade",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "firewall_direction", rename_all = "lowercase")]
 pub enum FirewallDirection {
