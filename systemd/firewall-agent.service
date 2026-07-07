@@ -1,0 +1,33 @@
+[Unit]
+Description=Linux Host Firewall Manager — Agent
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/fw-agent run
+Restart=always
+RestartSec=5s
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+
+# The agent needs CAP_NET_ADMIN and CAP_NET_RAW to manipulate firewall rules
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+
+# Writable paths
+ReadWritePaths=/etc/firewall-agent /var/log/firewall-agent
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

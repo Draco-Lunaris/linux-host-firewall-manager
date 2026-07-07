@@ -1,0 +1,32 @@
+[Unit]
+Description=Linux Host Firewall Manager — Background Worker
+After=network.target postgresql.service firewall-manager-web.service
+Wants=postgresql.service firewall-manager-web.service
+
+[Service]
+Type=simple
+User=firewall-manager
+Group=firewall-manager
+WorkingDirectory=/opt/firewall-manager
+Environment=FIREWALL_MANAGER_CONFIG=/etc/firewall-manager/config.toml
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+ReadWritePaths=/etc/firewall-manager /var/log/firewall-manager /opt/firewall-manager
+LimitNOFILE=65536
+
+ExecStart=/usr/local/bin/fw-worker
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=firewall-manager.target

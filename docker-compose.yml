@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: firewall_manager
+      POSTGRES_USER: firewall_manager
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-firewall_manager}
+    volumes:
+      - fw-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U firewall_manager"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - firewall-manager-net
+
+  app:
+    image: ghcr.io/draco-lunaris/linux-firewall-manager:${TAG:-latest}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "443:443"
+      - "80:80"
+    environment:
+      DATABASE_URL: postgres://firewall_manager:${DB_PASSWORD:-firewall_manager}@db:5432/firewall_manager
+      FIREWALL_MANAGER_CONFIG: /etc/firewall-manager/config.toml
+    volumes:
+      - fw-config:/etc/firewall-manager
+      - fw-logs:/var/log/firewall-manager
+      - fw-repo:/var/www/firewall-agent-repo
+    networks:
+      - firewall-manager-net
+
+volumes:
+  fw-db:
+  fw-config:
+  fw-logs:
+  fw-repo:
+
+networks:
+  firewall-manager-net:

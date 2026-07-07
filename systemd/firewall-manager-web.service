@@ -1,0 +1,35 @@
+[Unit]
+Description=Linux Host Firewall Manager — Web Server
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=firewall-manager
+Group=firewall-manager
+WorkingDirectory=/opt/firewall-manager
+Environment=FIREWALL_MANAGER_CONFIG=/etc/firewall-manager/config.toml
+Environment=GNUPGHOME=/etc/firewall-manager/ca/.gnupg
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+ReadWritePaths=/etc/firewall-manager /var/log/firewall-manager /var/www/firewall-agent-repo /opt/firewall-manager
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+LimitNOFILE=65536
+
+ExecStart=/usr/local/bin/fw-web
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=firewall-manager.target

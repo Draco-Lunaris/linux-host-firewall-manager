@@ -1,0 +1,19 @@
+#!/bin/bash
+set -euo pipefail
+
+# prerm — Linux Host Firewall Manager
+# Runs before the package is removed or upgraded.
+
+case "$1" in
+  remove)
+    systemctl stop firewall-manager.target 2>/dev/null || true
+    systemctl stop firewall-manager-web.service 2>/dev/null || true
+    systemctl stop firewall-manager-worker.service 2>/dev/null || true
+  ;;
+  upgrade|deconfigure)
+    systemctl stop firewall-manager-web.service 2>/dev/null || true
+    systemctl stop firewall-manager-worker.service 2>/dev/null || true
+  ;;
+esac
+
+exit 0

@@ -1,0 +1,27 @@
+#!/bin/bash
+set -euo pipefail
+
+# postrm — Linux Host Firewall Manager
+# Runs after the package is removed.
+
+case "$1" in
+  purge)
+    # Remove config and data
+    rm -rf /etc/firewall-manager
+    rm -rf /var/log/firewall-manager
+    rm -rf /var/www/firewall-agent-repo
+    rm -rf /opt/firewall-manager
+
+    # Remove service user
+    if id firewall-manager &>/dev/null; then
+      userdel firewall-manager 2>/dev/null || true
+    fi
+
+    systemctl daemon-reload 2>/dev/null || true
+  ;;
+  remove)
+    systemctl daemon-reload 2>/dev/null || true
+  ;;
+esac
+
+exit 0
