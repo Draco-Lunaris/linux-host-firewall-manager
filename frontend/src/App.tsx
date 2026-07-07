@@ -12,7 +12,6 @@ import HostDetailPage from './pages/HostDetailPage'
 import GroupsPage from './pages/GroupsPage'
 import UsersPage from './pages/UsersPage'
 import DashboardPage from './pages/DashboardPage'
-import PatchDeploymentPage from './pages/PatchDeploymentPage'
 import JobsPage from './pages/JobsPage'
 import MaintenanceWindowsPage from './pages/MaintenanceWindowsPage'
 import CertificatesPage from './pages/CertificatesPage'
@@ -20,6 +19,9 @@ import ReportsPage from './pages/ReportsPage'
 import SettingsPage from './pages/SettingsPage'
 import ProfilePage from './pages/ProfilePage'
 import RepoManagementPage from './pages/RepoManagementPage'
+import RulesPage from './pages/RulesPage'
+import PolicySetsPage from './pages/PolicySetsPage'
+import DeploymentPage from './pages/DeploymentPage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
@@ -103,7 +105,9 @@ function App() {
             <Route path="/groups" element={<GroupsPage />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/jobs" element={<JobsPage />} />
-            <Route path="/deployment" element={<PatchDeploymentPage />} />
+            <Route path="/rules" element={<RulesPage />} />
+            <Route path="/policy-sets" element={<PolicySetsPage />} />
+            <Route path="/deployment" element={<DeploymentPage />} />
             <Route path="/maintenance" element={<MaintenanceWindowsPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/certificates" element={<CertificatesPage />} />

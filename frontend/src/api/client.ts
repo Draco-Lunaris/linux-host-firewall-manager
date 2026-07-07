@@ -445,3 +445,159 @@ export const osPackageMappingsApi = {
   delete: (id: string) =>
     apiClient.delete(`/settings/os-package-mappings/${id}`),
 }
+
+
+// ── Firewall Rules API ──────────────────────────────────────────────────────
+export interface FirewallRule {
+  id: string
+  name: string
+  description: string
+  action: "allow" | "deny" | "reject" | "limit" | "masquerade"
+  direction: "in" | "out" | "forward"
+  protocol: "any" | "tcp" | "udp" | "icmp" | "icmpv6" | "gre" | "esp" | "ah" | "sctp"
+  src_cidr: string | null
+  src_port_start: number | null
+  src_port_end: number | null
+  dst_cidr: string | null
+  dst_port_start: number | null
+  dst_port_end: number | null
+  interface_in: string | null
+  interface_out: string | null
+  comment: string
+  log: boolean
+  priority: number
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateRuleRequest {
+  name: string
+  description?: string
+  action: FirewallRule["action"]
+  direction: FirewallRule["direction"]
+  protocol: FirewallRule["protocol"]
+  src_cidr?: string | null
+  src_port_start?: number | null
+  src_port_end?: number | null
+  dst_cidr?: string | null
+  dst_port_start?: number | null
+  dst_port_end?: number | null
+  interface_in?: string | null
+  interface_out?: string | null
+  comment?: string
+  log?: boolean
+  priority?: number
+}
+
+export interface ValidateRuleResponse {
+  allowed: boolean
+  requires_approval: boolean
+  reason: string
+  protected_cidr_check: string | null
+}
+
+export const rulesApi = {
+  list: () => apiClient.get<{ rules: FirewallRule[]; total: number }>("/rules"),
+  get: (id: string) => apiClient.get<FirewallRule>(`/rules/${id}`),
+  create: (data: CreateRuleRequest) => apiClient.post<FirewallRule>("/rules", data),
+  update: (id: string, data: Partial<CreateRuleRequest>) => apiClient.put<FirewallRule>(`/rules/${id}`, data),
+  delete: (id: string) => apiClient.delete(`/rules/${id}`),
+  validate: (id: string) => apiClient.post<ValidateRuleResponse>(`/rules/${id}/validate`),
+}
+
+// ── Firewall Policy Sets API ───────────────────────────────────────────────
+export interface FirewallPolicySet {
+  id: string
+  name: string
+  description: string
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PreviewCompilationResponse {
+  ufw_commands: string[]
+  firewalld_commands: string[]
+  rule_count: number
+}
+
+export const policySetsApi = {
+  list: () => apiClient.get<{ policy_sets: FirewallPolicySet[]; total: number }>("/policy-sets"),
+  get: (id: string) => apiClient.get<FirewallPolicySet>(`/policy-sets/${id}`),
+  create: (data: { name: string; description?: string }) => apiClient.post<FirewallPolicySet>("/policy-sets", data),
+  update: (id: string, data: { name?: string; description?: string }) => apiClient.put<FirewallPolicySet>(`/policy-sets/${id}`, data),
+  delete: (id: string) => apiClient.delete(`/policy-sets/${id}`),
+  listRules: (id: string) => apiClient.get<{ rules: FirewallRule[] }>(`/policy-sets/${id}/rules`),
+  addRule: (id: string, ruleId: string, order?: number) => apiClient.post(`/policy-sets/${id}/rules`, { rule_id: ruleId, rule_order: order }),
+  removeRule: (id: string, ruleId: string) => apiClient.delete(`/policy-sets/${id}/rules/${ruleId}`),
+  preview: (id: string) => apiClient.post<PreviewCompilationResponse>(`/policy-sets/${id}/preview`),
+}
+
+// ── Deployment API ──────────────────────────────────────────────────────────
+export interface DeployResponse {
+  job_id: string
+  host_count: number
+  status: string
+}
+
+export const deploymentApi = {
+  deploy: (policySetId: string, hostIds: string[], immediate?: boolean) =>
+    apiClient.post<DeployResponse>("/deployment", { policy_set_id: policySetId, host_ids: hostIds, immediate }),
+}
+
+// ── Host Policy Assignments API ─────────────────────────────────────────────
+export interface HostPolicyAssignment {
+  host_id: string
+  policy_set_id: string
+  assigned_by: string | null
+  assigned_at: string
+}
+
+export interface ProtectedCidr {
+  host_id: string
+  cidr: string
+  label: string
+  created_at: string
+}
+
+export interface DriftSnapshot {
+  id: string
+  host_id: string
+  snapshot_hash: string
+  rule_count: number
+  captured_at: string
+  source: string
+}
+
+export const hostPolicyApi = {
+  getAssignments: (hostId: string) => apiClient.get<HostPolicyAssignment[]>(`/hosts/${hostId}/policy-sets`),
+  assign: (hostId: string, policySetId: string) => apiClient.post(`/hosts/${hostId}/policy-sets`, { policy_set_id: policySetId }),
+  unassign: (hostId: string, policySetId: string) => apiClient.delete(`/hosts/${hostId}/policy-sets/${policySetId}`),
+  getProtectedCidrs: (hostId: string) => apiClient.get<ProtectedCidr[]>(`/hosts/${hostId}/protected-cidrs`),
+  addProtectedCidr: (hostId: string, cidr: string, label?: string) => apiClient.post(`/hosts/${hostId}/protected-cidrs`, { cidr, label }),
+  getDriftSnapshots: (hostId: string) => apiClient.get<DriftSnapshot[]>(`/hosts/${hostId}/drift-snapshots`),
+}
+
+// ── Enrollment Tokens API (SEC-002) ────────────────────────────────────────
+export interface EnrollmentTokenInfo {
+  host_fqdn: string
+  token_hash_prefix: string
+  host_ip: string | null
+  expires_at: string
+  used_at: string | null
+}
+
+export interface CreateTokenResponse {
+  token: string
+  host_fqdn: string
+  expires_in_hours: number
+  warning: string
+}
+
+export const enrollmentTokensApi = {
+  list: () => apiClient.get<EnrollmentTokenInfo[]>("/admin/enrollment-tokens"),
+  create: (hostFqdn: string, hostIp?: string, ttlHours?: number) =>
+    apiClient.post<CreateTokenResponse>("/admin/enrollment-tokens", { host_fqdn: hostFqdn, host_ip: hostIp, ttl_hours: ttlHours }),
+  revoke: (hash: string) => apiClient.post(`/admin/enrollment-tokens/${hash}/revoke`),
+}
