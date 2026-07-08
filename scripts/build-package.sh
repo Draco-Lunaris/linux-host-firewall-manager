@@ -57,9 +57,9 @@ cp -r frontend/dist/* "${BUILD_DIR}/usr/share/firewall-manager/frontend/"
 # Migrations
 cp migrations/*.sql "${BUILD_DIR}/usr/share/firewall-manager/migrations/"
 
-# Config example
-mkdir -p "${BUILD_DIR}/etc/firewall-manager"
-cp config/config.example.toml "${BUILD_DIR}/etc/firewall-manager/config.example.toml"
+# Config example (in /usr/share for postinst to copy, /etc is created by postinst)
+mkdir -p "${BUILD_DIR}/usr/share/firewall-manager"
+cp config/config.example.toml "${BUILD_DIR}/usr/share/firewall-manager/config.example.toml"
 
 # Systemd units
 cp systemd/firewall-manager-web.service "${BUILD_DIR}/lib/systemd/system/"
