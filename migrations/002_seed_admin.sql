@@ -4,5 +4,5 @@
 
 INSERT INTO users (username, display_name, email, role, password_hash, mfa_enabled, is_active, force_password_reset)
 VALUES ('admin', 'Administrator', 'admin@localhost', 'admin',
-        'PLACEHOLDER_HASH', FALSE, TRUE, TRUE)
+        '$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', FALSE, TRUE, TRUE)
 ON CONFLICT (username) DO NOTHING;
