@@ -1,5 +1,6 @@
-use fw_core::AppConfig;
 use std::net::SocketAddr;
+
+use fw_core::AppConfig;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
