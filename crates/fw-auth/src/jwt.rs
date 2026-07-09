@@ -50,7 +50,7 @@ pub fn issue_access_token(
         role: role.to_string(),
         username: username.to_string(),
     };
-    let key = EncodingKey::from_ec_private_key_pem(signing_key_pem.as_bytes())
+    let key = EncodingKey::from_ec_pem(signing_key_pem.as_bytes())
         .map_err(|e| JwtError::Encode(e.to_string()))?;
     let token = encode(&Header::new(Algorithm::ES256), &claims, &key)
         .map_err(|e| JwtError::Encode(e.to_string()))?;
@@ -58,7 +58,7 @@ pub fn issue_access_token(
 }
 
 pub fn validate_access_token(verify_key_pem: &str, token: &str) -> Result<AccessClaims, JwtError> {
-    let key = DecodingKey::from_ec_public_key_pem(verify_key_pem.as_bytes())
+    let key = DecodingKey::from_ec_pem(verify_key_pem.as_bytes())
         .map_err(|e| JwtError::Decode(e.to_string()))?;
     let mut validation = Validation::new(Algorithm::ES256);
     validation.leeway = 5;
