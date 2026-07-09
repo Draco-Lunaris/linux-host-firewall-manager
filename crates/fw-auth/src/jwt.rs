@@ -35,7 +35,7 @@ pub enum JwtError {
 }
 
 pub fn issue_access_token(
-    signing_key_pem: &str,
+    signing_key: &str,
     user_id: Uuid,
     role: &str,
     username: &str,
@@ -50,17 +50,15 @@ pub fn issue_access_token(
         role: role.to_string(),
         username: username.to_string(),
     };
-    let key = EncodingKey::from_rsa_pem(signing_key_pem.as_bytes())
-        .map_err(|e| JwtError::Encode(e.to_string()))?;
-    let token = encode(&Header::new(Algorithm::RS256), &claims, &key)
+    let key = EncodingKey::from_secret(signing_key.as_bytes());
+    let token = encode(&Header::new(Algorithm::HS256), &claims, &key)
         .map_err(|e| JwtError::Encode(e.to_string()))?;
     Ok((token, jti))
 }
 
-pub fn validate_access_token(verify_key_pem: &str, token: &str) -> Result<AccessClaims, JwtError> {
-    let key = DecodingKey::from_rsa_pem(verify_key_pem.as_bytes())
-        .map_err(|e| JwtError::Decode(e.to_string()))?;
-    let mut validation = Validation::new(Algorithm::RS256);
+pub fn validate_access_token(verify_key: &str, token: &str) -> Result<AccessClaims, JwtError> {
+    let key = DecodingKey::from_secret(verify_key.as_bytes());
+    let mut validation = Validation::new(Algorithm::HS256);
     validation.leeway = 5;
     let data = decode::<AccessClaims>(token, &key, &validation).map_err(|e| {
         if *e.kind() == jsonwebtoken::errors::ErrorKind::ExpiredSignature {

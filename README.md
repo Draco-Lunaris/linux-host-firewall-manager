@@ -13,7 +13,7 @@ Linux Host Firewall Manager provides a web-based management plane for controllin
 - **Structured Rule Model** — Typed, validated firewall rules (no shell scripts, no injection surface)
 - **Policy Sets** — Named bundles of rules assigned to hosts or groups
 - **Drift Detection** — Agent reports rule snapshots; manager detects and alerts on drift
-- **Secure by Design** — mTLS with internal CA, RS256 (RSA 2048-bit) JWT, Argon2id, TOTP MFA, hash-chained audit log
+- **Secure by Design** — mTLS with internal CA, HS256 (HMAC-SHA256) JWT, Argon2id, TOTP MFA, hash-chained audit log
 - **Self-Enrollment** — CSR-based enrollment with one-time tokens and admin approval
 - **Agent Self-Update** — GPG-signed apt/dnf repo for agent updates
 

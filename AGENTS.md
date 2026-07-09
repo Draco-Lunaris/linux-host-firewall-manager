@@ -13,7 +13,7 @@
 
 ## Security
 - mTLS for all agent communication (TLS 1.3, pinned internal CA, CRL for revocation).
-- RS256 JWT (RSA 2048-bit, 15-min TTL), Argon2id passwords, TOTP MFA, AES-256-GCM secrets at rest.
+- HS256 JWT (HMAC-SHA256, 15-min TTL), Argon2id passwords, TOTP MFA, AES-256-GCM secrets at rest.
 - Hash-chained audit log with external anchoring (S3 Object Lock / RFC 3161 TSA).
 - No shell execution of operator-supplied content — firewall rules are typed DB rows compiled by the agent.
 - Per-host authorization: every agent API call is bound to the mTLS-certified host identity.
