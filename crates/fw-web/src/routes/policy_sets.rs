@@ -334,7 +334,7 @@ fn compile_ufw_command(rule: &FirewallRule) -> String {
     if rule.protocol != FirewallProtocol::Any {
         cmd.push_str(&format!(
             " proto {}",
-            format!("{:?}", &rule.protocol).to_lowercase()
+            format!("{:?}", rule.protocol).to_lowercase()
         ));
     }
     if let Some(src) = &rule.src_cidr {
