@@ -1,0 +1,73 @@
+#!/bin/bash
+set -euo pipefail
+
+# postinst — Linux Host Firewall Manager
+# Runs after the .deb is installed or upgraded.
+
+case "$1" in
+  configure)
+    # Create service user
+    if ! id firewall-manager &>/dev/null; then
+      useradd --system --no-create-home --shell /usr/sbin/nologin \
+        --home-dir /opt/firewall-manager firewall-manager
+    fi
+
+    # Create directories
+    mkdir -p /etc/firewall-manager/jwt
+    mkdir -p /etc/firewall-manager/ca
+    mkdir -p /etc/firewall-manager/keys
+    mkdir -p /var/log/firewall-manager
+    mkdir -p /var/www/firewall-agent-repo
+    mkdir -p /opt/firewall-manager
+
+    # Set ownership
+    chown -R firewall-manager:firewall-manager /etc/firewall-manager /var/log/firewall-manager /var/www/firewall-agent-repo /opt/firewall-manager
+
+    # Set permissions
+    chmod 0750 /etc/firewall-manager
+    chmod 0700 /etc/firewall-manager/keys
+
+    # Copy config if not present
+    if [ ! -f /etc/firewall-manager/config.toml ]; then
+      cp /usr/share/firewall-manager/config.example.toml /etc/firewall-manager/config.toml
+      chmod 0640 /etc/firewall-manager/config.toml
+      chown firewall-manager:firewall-manager /etc/firewall-manager/config.toml
+    fi
+
+    # Generate JWT keys if not present
+    if [ ! -f /etc/firewall-manager/jwt/signing.pem ]; then
+      openssl genpkey -algorithm ed25519 -out /etc/firewall-manager/jwt/signing.pem
+      openssl pkey -in /etc/firewall-manager/jwt/signing.pem -pubout -out /etc/firewall-manager/jwt/verify.pem
+      chmod 600 /etc/firewall-manager/jwt/signing.pem
+      chown firewall-manager:firewall-manager /etc/firewall-manager/jwt/signing.pem /etc/firewall-manager/jwt/verify.pem
+    fi
+
+    # Reload systemd
+    systemctl daemon-reload
+
+    echo ""
+    echo "=== Linux Host Firewall Manager installed ==="
+    echo ""
+    echo "Next steps:"
+    echo "  1. Configure PostgreSQL:"
+    echo "     sudo -u postgres psql <<EOF"
+    echo "     CREATE DATABASE firewall_manager;"
+    echo "     CREATE USER firewall_manager WITH PASSWORD 'your_secure_password';"
+    echo "     GRANT ALL PRIVILEGES ON DATABASE firewall_manager TO firewall_manager;"
+    echo "     EOF"
+    echo ""
+    echo "  2. Edit config: sudo nano /etc/firewall-manager/config.toml"
+    echo ""
+    echo "  3. Start services: sudo systemctl enable --now firewall-manager.target"
+    echo ""
+    echo "  4. Check logs: journalctl -u firewall-manager-web -f"
+    echo ""
+    echo "  5. Access: https://your-server-ip:443"
+    echo "     Default admin: username=admin, password shown in journalctl"
+    echo ""
+  ;;
+  abort-upgrade|abort-remove|abort-deconfigure)
+  ;;
+esac
+
+exit 0

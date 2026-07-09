@@ -1,0 +1,14 @@
+Package: linux-firewall-manager
+Version: 0.1.0-1
+Architecture: amd64
+Maintainer: Echo <echo@moon-dragon.us>
+Depends: postgresql-16, openssl, curl, libssl3, libc6 (>= 2.39), libfontconfig1, gnupg
+Recommends: postgresql-client-16, fonts-dejavu-core
+Section: admin
+Priority: optional
+Description: Enterprise-class centralized host firewall management
+ Linux Host Firewall Manager provides a web-based management plane for
+ controlling firewall rules across a fleet of Linux servers and workstations.
+ It communicates with managed hosts through a Rust agent over mTLS-secured
+ REST endpoints, with support for UFW (Debian/Ubuntu) and firewalld
+ (RHEL/Fedora/Alma) backends.

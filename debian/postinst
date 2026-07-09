@@ -36,7 +36,7 @@ case "$1" in
 
     # Generate JWT keys if not present
     if [ ! -f /etc/firewall-manager/jwt/signing.pem ]; then
-      openssl genpkey -algorithm ed25519 -out /etc/firewall-manager/jwt/signing.pem
+      openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out /etc/firewall-manager/jwt/signing.pem
       openssl pkey -in /etc/firewall-manager/jwt/signing.pem -pubout -out /etc/firewall-manager/jwt/verify.pem
       chmod 600 /etc/firewall-manager/jwt/signing.pem
       chown firewall-manager:firewall-manager /etc/firewall-manager/jwt/signing.pem /etc/firewall-manager/jwt/verify.pem
