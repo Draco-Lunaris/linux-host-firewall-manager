@@ -124,7 +124,7 @@ pub struct CreateUserRequest {
     pub username: String,
     pub display_name: String,
     pub email: String,
-    pub role: String,
+    pub role: fw_core::models::UserRole,
     pub password: String,
 }
 
@@ -132,6 +132,6 @@ pub struct CreateUserRequest {
 pub struct UpdateUserRequest {
     pub display_name: Option<String>,
     pub email: Option<String>,
-    pub role: Option<String>,
+    pub role: Option<fw_core::models::UserRole>,
     pub is_active: Option<bool>,
 }

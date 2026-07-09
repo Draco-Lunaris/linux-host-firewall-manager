@@ -130,7 +130,7 @@ async fn delete_window(
 pub struct CreateWindowRequest {
     pub host_id: Uuid,
     pub label: String,
-    pub recurrence: String,
+    pub recurrence: fw_core::models::WindowRecurrence,
     pub start_at: chrono::DateTime<chrono::Utc>,
     pub duration_minutes: Option<i32>,
 }

@@ -61,7 +61,7 @@ pub async fn log_event(
 
     let _ = sqlx::query(
         "INSERT INTO audit_log (action, actor_user_id, actor_username, target_type, target_id, details, ip_address, request_id, created_at, row_hash, prev_hash)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+         VALUES ($1::audit_action, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
     )
     .bind(action)
     .bind(actor_user_id)
@@ -93,7 +93,7 @@ pub async fn verify_integrity(pool: &PgPool) -> Result<IntegrityResult, crate::e
         Option<String>,
         chrono::DateTime<chrono::Utc>,
     )> = sqlx::query_as(
-        "SELECT id, action, row_hash, prev_hash, actor_user_id, actor_username, target_type, target_id, details, ip_address, request_id, created_at
+        "SELECT id, action::text, row_hash, prev_hash, actor_user_id, actor_username, target_type, target_id, details, ip_address, request_id, created_at
          FROM audit_log ORDER BY id",
     )
     .fetch_all(pool)

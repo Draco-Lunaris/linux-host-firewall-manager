@@ -34,11 +34,11 @@ case "$1" in
       chown firewall-manager:firewall-manager /etc/firewall-manager/config.toml
     fi
 
-    # Generate JWT HMAC secret if not present
+    # Generate JWT keys if not present
     if [ ! -f /etc/firewall-manager/jwt/signing.pem ]; then
-      openssl rand -base64 48 > /etc/firewall-manager/jwt/signing.pem
-      cp /etc/firewall-manager/jwt/signing.pem /etc/firewall-manager/jwt/verify.pem
-      chmod 600 /etc/firewall-manager/jwt/signing.pem /etc/firewall-manager/jwt/verify.pem
+      openssl genpkey -algorithm ed25519 -out /etc/firewall-manager/jwt/signing.pem
+      openssl pkey -in /etc/firewall-manager/jwt/signing.pem -pubout -out /etc/firewall-manager/jwt/verify.pem
+      chmod 600 /etc/firewall-manager/jwt/signing.pem
       chown firewall-manager:firewall-manager /etc/firewall-manager/jwt/signing.pem /etc/firewall-manager/jwt/verify.pem
     fi
 

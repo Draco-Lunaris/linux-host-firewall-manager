@@ -60,6 +60,17 @@ pub enum UserRole {
     BreakGlassOperator,
 }
 
+impl UserRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Admin => "admin",
+            Self::Operator => "operator",
+            Self::Reporter => "reporter",
+            Self::BreakGlassOperator => "break_glass_operator",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "job_status", rename_all = "lowercase")]
 pub enum JobStatus {
@@ -96,6 +107,84 @@ pub enum CertStatus {
     Active,
     Revoked,
     Expired,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "auth_provider", rename_all = "snake_case")]
+pub enum AuthProvider {
+    Local,
+    AzureSso,
+    Keycloak,
+    Oidc,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "window_recurrence", rename_all = "lowercase")]
+pub enum WindowRecurrence {
+    Once,
+    Daily,
+    Weekly,
+    Monthly,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "audit_action", rename_all = "snake_case")]
+pub enum AuditAction {
+    UserLogin,
+    UserLogout,
+    UserLoginFailed,
+    UserCreated,
+    UserDeleted,
+    UserUpdated,
+    HostRegistered,
+    HostRemoved,
+    GroupCreated,
+    GroupDeleted,
+    GroupMembershipChanged,
+    FirewallJobCreated,
+    FirewallJobCancelled,
+    FirewallJobRollback,
+    MaintenanceWindowCreated,
+    MaintenanceWindowUpdated,
+    MaintenanceWindowDeleted,
+    CertificateIssued,
+    CertificateRenewed,
+    CertificateRevoked,
+    CertificateDownloaded,
+    ConfigChanged,
+    DiscoveryScanStarted,
+    AuditIntegrityVerified,
+    EmailNotificationSent,
+    FirewallJobCompleted,
+    FirewallJobFailed,
+    MaintenanceWindowReminder,
+    RuleCreated,
+    RuleUpdated,
+    RuleDeleted,
+    PolicySetCreated,
+    PolicySetChanged,
+    PolicyAssigned,
+    PolicyUnassigned,
+    RuleDeployed,
+    RuleRollback,
+    DriftDetected,
+    BackendChanged,
+    BreakGlassUsed,
+    EnrollmentTokenIssued,
+    EnrollmentTokenUsed,
+    EnrollmentTokenRevoked,
+    HostEnrolled,
+    CaIntermediateIssued,
+    CaIntermediateRevoked,
+    AuditAnchorMismatch,
+    AgentVersionChanged,
+    AgentBinaryHashChanged,
+    CrlStatusChanged,
+    CrlStaleDetected,
+    CrlInvalid,
+    UpgradeTriggered,
+    BatchUpgradeTriggered,
+    UpgradeVersionRefreshed,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
@@ -205,7 +294,7 @@ pub struct User {
     pub display_name: String,
     pub email: String,
     pub role: UserRole,
-    pub auth_provider: String,
+    pub auth_provider: AuthProvider,
     pub mfa_enabled: bool,
     pub is_active: bool,
     pub force_password_reset: bool,
@@ -277,7 +366,7 @@ pub struct MaintenanceWindow {
     pub id: Uuid,
     pub host_id: Uuid,
     pub label: String,
-    pub recurrence: String,
+    pub recurrence: WindowRecurrence,
     pub start_at: DateTime<Utc>,
     pub duration_minutes: i32,
     pub recurrence_day: Option<i32>,

@@ -2,10 +2,15 @@ use fw_core::AppConfig;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Install the default crypto provider for rustls (required since 0.23)
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "fw_web=debug,fw_core=debug,info".into()),
+                .unwrap_or_else(|_| "fw_web=debug,fw_core=debug,fw_auth=debug,info".into()),
         )
         .init();
 

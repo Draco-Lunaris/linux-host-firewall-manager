@@ -53,7 +53,7 @@ async fn login(
     State(state): State<std::sync::Arc<AppState>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, fw_core::AppError> {
-    let user: Option<(uuid::Uuid, String, String, bool, bool, Option<String>, Option<chrono::DateTime<chrono::Utc>>, i32, Option<chrono::DateTime<chrono::Utc>>)> =
+    let user: Option<(uuid::Uuid, String, fw_core::models::UserRole, bool, bool, Option<String>, Option<chrono::DateTime<chrono::Utc>>, i32, Option<chrono::DateTime<chrono::Utc>>)> =
         sqlx::query_as(
             "SELECT id, username, role, mfa_enabled, is_active, password_hash, last_login_at, failed_login_attempts, locked_until FROM users WHERE username = $1 AND auth_provider = 'local'",
         )
@@ -77,7 +77,7 @@ async fn login(
         (
             uuid::Uuid::nil(),
             String::new(),
-            String::new(),
+            fw_core::models::UserRole::Operator,
             false,
             false,
             Some("$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAA$dummy".to_string()),
@@ -153,7 +153,7 @@ async fn login(
 
     // Issue tokens
     let (access_token, jti) =
-        fw_auth::issue_access_token(&state.signing_key_pem, user_id, &role, &username)
+        fw_auth::issue_access_token(&state.signing_key_pem, user_id, role.as_str(), &username)
             .map_err(|e| fw_core::AppError::Internal(e.to_string()))?;
 
     // Store refresh token + jti
@@ -187,7 +187,7 @@ async fn login(
         user: UserInfo {
             id: user_id,
             username,
-            role,
+            role: role.as_str().to_string(),
             mfa_enabled,
         },
     }))
@@ -206,7 +206,7 @@ async fn refresh_token(
     let hash = fw_auth::password::hash_password(&req.refresh_token)
         .map_err(|e| fw_core::AppError::Internal(e.to_string()))?;
 
-    let row: Option<(uuid::Uuid, String, String, bool)> = sqlx::query_as(
+    let row: Option<(uuid::Uuid, String, fw_core::models::UserRole, bool)> = sqlx::query_as(
         "SELECT u.id, u.username, u.role, rt.revoked FROM refresh_tokens rt
          JOIN users u ON u.id = rt.user_id
          WHERE rt.token_hash = $1 AND rt.revoked = FALSE AND rt.expires_at > NOW()",
@@ -224,7 +224,7 @@ async fn refresh_token(
     }
 
     let (access_token, jti) =
-        fw_auth::issue_access_token(&state.signing_key_pem, user_id, &role, &username)
+        fw_auth::issue_access_token(&state.signing_key_pem, user_id, role.as_str(), &username)
             .map_err(|e| fw_core::AppError::Internal(e.to_string()))?;
 
     // Update jti on the refresh token
@@ -242,7 +242,7 @@ async fn refresh_token(
         user: UserInfo {
             id: user_id,
             username,
-            role,
+            role: role.as_str().to_string(),
             mfa_enabled: false,
         },
     }))
