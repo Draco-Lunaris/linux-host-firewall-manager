@@ -50,17 +50,17 @@ pub fn issue_access_token(
         role: role.to_string(),
         username: username.to_string(),
     };
-    let key = EncodingKey::from_ec_pem(signing_key_pem.as_bytes())
+    let key = EncodingKey::from_rsa_pem(signing_key_pem.as_bytes())
         .map_err(|e| JwtError::Encode(e.to_string()))?;
-    let token = encode(&Header::new(Algorithm::ES256), &claims, &key)
+    let token = encode(&Header::new(Algorithm::RS256), &claims, &key)
         .map_err(|e| JwtError::Encode(e.to_string()))?;
     Ok((token, jti))
 }
 
 pub fn validate_access_token(verify_key_pem: &str, token: &str) -> Result<AccessClaims, JwtError> {
-    let key = DecodingKey::from_ec_pem(verify_key_pem.as_bytes())
+    let key = DecodingKey::from_rsa_pem(verify_key_pem.as_bytes())
         .map_err(|e| JwtError::Decode(e.to_string()))?;
-    let mut validation = Validation::new(Algorithm::ES256);
+    let mut validation = Validation::new(Algorithm::RS256);
     validation.leeway = 5;
     let data = decode::<AccessClaims>(token, &key, &validation).map_err(|e| {
         if *e.kind() == jsonwebtoken::errors::ErrorKind::ExpiredSignature {
