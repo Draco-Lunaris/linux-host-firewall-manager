@@ -1040,11 +1040,9 @@ export default function HostDetailPage() {
             </Grid>
             <Grid size={{ xs: 12, sm: 6, md: 4 }}>
               <Typography variant="caption" color="text.secondary" display="block">CONTAINER RUNTIME</Typography>
-              <Typography variant="body2">
-                {host?.container_runtime ? (
-                  <Chip size="small" label={host.container_runtime} color="warning" variant="outlined" />
-                ) : 'None (bare metal)'}
-              </Typography>
+              {host?.container_runtime ? (
+                <Chip size="small" label={host.container_runtime} color="warning" variant="outlined" />
+              ) : <Typography variant="body2">None (bare metal)</Typography>}
             </Grid>
           </>)}
         </Grid>
