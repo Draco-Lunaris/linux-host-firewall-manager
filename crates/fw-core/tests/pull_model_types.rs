@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::models::*;
+    use fw_core::models::*;
     use chrono::Utc;
     use uuid::Uuid;
 
