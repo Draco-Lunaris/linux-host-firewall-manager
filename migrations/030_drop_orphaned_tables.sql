@@ -95,8 +95,13 @@ CREATE TYPE job_kind_new AS ENUM (
 );
 
 -- Migrate existing data
+ALTER TABLE firewall_jobs ALTER COLUMN kind DROP DEFAULT;
 ALTER TABLE firewall_jobs ALTER COLUMN kind TYPE job_kind_new USING kind::text::job_kind_new;
+ALTER TABLE firewall_jobs ALTER COLUMN kind SET DEFAULT 'rule_apply'::job_kind_new;
 
 -- Swap types
 DROP TYPE job_kind;
 ALTER TYPE job_kind_new RENAME TO job_kind;
+
+-- Fix the default to use the renamed type
+ALTER TABLE firewall_jobs ALTER COLUMN kind SET DEFAULT 'rule_apply'::job_kind;
