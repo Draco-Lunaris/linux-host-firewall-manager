@@ -72,8 +72,6 @@ pub struct HostRow {
     pub registered_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
-    Ok(Json(hosts))
-}
 
 async fn get_host(
     State(state): State<std::sync::Arc<AppState>>,
