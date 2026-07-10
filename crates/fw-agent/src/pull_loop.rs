@@ -260,11 +260,16 @@ async fn execute_pending_action(
 }
 
 fn gather_os_info() -> serde_json::Value {
-    serde_json::json!({
+    let container_runtime = crate::backend::container_detect::detect_container_runtime();
+    let mut info = serde_json::json!({
         "hostname": hostname(),
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
-    })
+    });
+    if let Some(runtime) = container_runtime {
+        info["container_runtime"] = serde_json::Value::String(runtime);
+    }
+    info
 }
 
 fn hostname() -> String {
