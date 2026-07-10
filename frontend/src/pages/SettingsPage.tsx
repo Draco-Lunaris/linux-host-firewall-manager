@@ -74,12 +74,13 @@ export default function SettingsPage() {
     try {
       setLoading(true)
       const { data } = await settingsApi.get()
-      setOidc({ ...data.oidc, client_secret: '' })
-      setSmtp({ ...data.smtp, password: '' })
-      setPolling(data.polling)
-      setIpWhitelist(data.ip_whitelist)
-      setWebTlsStrategy(data.web_tls_strategy)
-      setNotification(data.notification)
+      if (!data) { setError('Settings not available'); return }
+      setOidc({ ...(data.oidc || {}), client_secret: '' })
+      setSmtp({ ...(data.smtp || {}), password: '' })
+      setPolling(data.polling || {})
+      setIpWhitelist(data.ip_whitelist || [])
+      setWebTlsStrategy(data.web_tls_strategy || 'internal_ca')
+      setNotification(data.notification || {})
     } catch {
       setError('Failed to load settings')
     } finally {

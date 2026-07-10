@@ -74,8 +74,9 @@ export default function HostsPage() {
     try {
       const offset = page * rowsPerPage
       const res = await apiClient.get('/hosts', { params: { limit: rowsPerPage, offset } })
-      setHosts(res.data.hosts)
-      setTotal(res.data.total)
+      const data = res.data
+      setHosts(Array.isArray(data) ? data : (data.hosts || []))
+      setTotal(Array.isArray(data) ? data.length : (data.total || 0))
     } catch { /* handled by interceptor */ }
     finally { setLoading(false) }
   }, [page, rowsPerPage])

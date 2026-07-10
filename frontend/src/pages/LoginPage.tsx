@@ -242,7 +242,7 @@ export default function LoginPage() {
     <Container maxWidth="xs" sx={{ mt: 12 }}>
       <Paper elevation={4} sx={{ p: 4 }}>
         <Typography variant="h5" fontWeight={700} mb={3} align="center">
-          🐉 Linux Patch Manager
+          🐉 Firewall Manager
         </Typography>
 
         {error && (

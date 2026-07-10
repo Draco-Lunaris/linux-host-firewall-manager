@@ -34,10 +34,44 @@ pub fn router() -> Router<std::sync::Arc<AppState>> {
 async fn list_hosts(
     State(state): State<std::sync::Arc<AppState>>,
     _auth: AuthUser,
-) -> Result<Json<Vec<Host>>, fw_core::AppError> {
-    let hosts: Vec<Host> = sqlx::query_as("SELECT * FROM hosts ORDER BY fqdn")
-        .fetch_all(&state.db)
-        .await?;
+) -> Result<Json<HostsListResponse>, fw_core::AppError> {
+    let hosts: Vec<HostRow> = sqlx::query_as(
+        "SELECT id, fqdn, ip_address::text, display_name, os_family, os_name, arch,
+                agent_version, health_status::text, last_health_at, last_sync_at,
+                agent_port, notes, registered_at, updated_at
+         FROM hosts ORDER BY fqdn",
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let total = hosts.len();
+    Ok(Json(HostsListResponse { hosts, total }))
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct HostsListResponse {
+    pub hosts: Vec<HostRow>,
+    pub total: usize,
+}
+
+#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+pub struct HostRow {
+    pub id: Uuid,
+    pub fqdn: String,
+    pub ip_address: String,
+    pub display_name: String,
+    pub os_family: Option<String>,
+    pub os_name: Option<String>,
+    pub arch: Option<String>,
+    pub agent_version: Option<String>,
+    pub health_status: String,
+    pub last_health_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_sync_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub agent_port: i32,
+    pub notes: String,
+    pub registered_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
     Ok(Json(hosts))
 }
 

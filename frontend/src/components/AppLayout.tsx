@@ -92,11 +92,12 @@ export default function AppLayout() {
 
   const drawer = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <Toolbar sx={{ justifyContent: 'center', py: 1.5 }}>
+      <Toolbar sx={{ justifyContent: 'center', py: 1, minHeight: '56px !important' }}>
         <Typography variant="h6" fontWeight={700} sx={{
           background: 'linear-gradient(135deg, #42A5F5 30%, #26C6DA 100%)',
           WebkitBackgroundClip: 'text',
           WebkitTextFillColor: 'transparent',
+          lineHeight: 1.2,
         }}>
           🐉 Firewall Manager
         </Typography>

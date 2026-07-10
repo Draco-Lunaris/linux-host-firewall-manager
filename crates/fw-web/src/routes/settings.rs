@@ -6,6 +6,7 @@ use fw_auth::rbac::AuthUser;
 
 pub fn router() -> Router<std::sync::Arc<AppState>> {
     Router::new()
+        .route("/", get(get_settings))
         .route(
             "/ip-whitelist",
             get(get_ip_whitelist).put(update_ip_whitelist),
@@ -16,6 +17,30 @@ pub fn router() -> Router<std::sync::Arc<AppState>> {
         )
         .route("/oidc", get(get_oidc_config).put(update_oidc_config))
         .route("/smtp", get(get_smtp_config).put(update_smtp_config))
+}
+
+async fn get_settings(
+    State(state): State<std::sync::Arc<AppState>>,
+    _auth: AuthUser,
+) -> Result<Json<serde_json::Value>, fw_core::AppError> {
+    // Return a combined settings object that the frontend expects
+    let ip_whitelist: Option<String> =
+        sqlx::query_scalar("SELECT value FROM system_config WHERE key = 'ip_whitelist'")
+            .fetch_optional(&state.db)
+            .await?;
+    let ip_list: Vec<String> = ip_whitelist
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+
+    Ok(Json(serde_json::json!({
+        "oidc": { "enabled": false, "issuer": "", "client_id": "", "client_secret": "", "redirect_uri": "" },
+        "smtp": { "enabled": false, "host": "", "port": 587, "username": "", "password": "", "from": "", "tls_mode": "starttls" },
+        "polling": { "health_interval": 300, "drift_interval": 900 },
+        "ip_whitelist": ip_list,
+        "web_tls_strategy": "internal_ca",
+        "notification": { "email_enabled": false, "webhook_enabled": false, "webhook_url": "" }
+    })))
 }
 
 async fn get_ip_whitelist(
