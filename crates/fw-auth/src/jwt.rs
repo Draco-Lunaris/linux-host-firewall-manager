@@ -57,7 +57,7 @@ pub fn issue_access_token(
     Ok((token, jti))
 }
 
-pub fn validate_access_token(verify_key_pem: &str, token: &str) -> Result<AccessClaims, JwtError> {
+pub fn validate_access_token(token: &str, verify_key_pem: &str) -> Result<AccessClaims, JwtError> {
     let key = DecodingKey::from_ed_pem(verify_key_pem.as_bytes())
         .map_err(|e| JwtError::Decode(e.to_string()))?;
     let mut validation = Validation::new(Algorithm::EdDSA);
@@ -85,3 +85,51 @@ pub fn load_verify_key(path: &str) -> Result<String, JwtError> {
 fn _unused() -> Duration {
     Duration::seconds(DEFAULT_ACCESS_TTL_SECS)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ed25519_roundtrip() {
+        std::process::Command::new("openssl")
+            .args(["genpkey", "-algorithm", "ed25519", "-out", "/tmp/test_signing.pem"])
+            .output()
+            .expect("openssl genpkey failed");
+        std::process::Command::new("openssl")
+            .args(["pkey", "-in", "/tmp/test_signing.pem", "-pubout", "-out", "/tmp/test_verify.pem"])
+            .output()
+            .expect("openssl pkey failed");
+
+        let signing_pem = std::fs::read_to_string("/tmp/test_signing.pem").unwrap();
+        let verify_pem = std::fs::read_to_string("/tmp/test_verify.pem").unwrap();
+
+        let enc_key = EncodingKey::from_ed_pem(signing_pem.as_bytes())
+            .expect("EncodingKey::from_ed_pem failed");
+        let dec_key = DecodingKey::from_ed_pem(verify_pem.as_bytes())
+            .expect("DecodingKey::from_ed_pem failed");
+
+        let now = Utc::now().timestamp();
+        let claims = AccessClaims {
+            sub: "test-user".to_string(),
+            iat: now,
+            exp: now + 900,
+            jti: "test-jti".to_string(),
+            role: "admin".to_string(),
+            username: "admin".to_string(),
+        };
+
+        let token = encode(&Header::new(Algorithm::EdDSA), &claims, &enc_key)
+            .expect("encode failed");
+
+        let mut validation = Validation::new(Algorithm::EdDSA);
+        validation.validate_exp = true;
+        validation.leeway = 5;
+        let data = decode::<AccessClaims>(&token, &dec_key, &validation)
+            .expect("decode failed");
+
+        assert_eq!(data.claims.sub, "test-user");
+        assert_eq!(data.claims.role, "admin");
+    }
+}
+
