@@ -36,10 +36,16 @@ async fn list_hosts(
     _auth: AuthUser,
 ) -> Result<Json<HostsListResponse>, fw_core::AppError> {
     let hosts: Vec<HostRow> = sqlx::query_as(
-        "SELECT id, fqdn, ip_address::text, display_name, os_family, os_name, arch,
-                agent_version, health_status::text, last_health_at, last_sync_at,
-                agent_port, notes, registered_at, updated_at
-         FROM hosts ORDER BY fqdn",
+        "SELECT h.id, h.fqdn, h.ip_address::text, h.display_name, h.os_family, h.os_name, h.arch,
+                h.agent_version, h.health_status::text, h.last_health_at, h.last_sync_at,
+                h.agent_port, h.notes, h.registered_at, h.updated_at,
+                latest.os_info->>'container_runtime' AS container_runtime
+         FROM hosts h
+         LEFT JOIN LATERAL (
+             SELECT os_info FROM agent_check_ins
+             WHERE host_id = h.id ORDER BY checked_in_at DESC LIMIT 1
+         ) latest ON true
+         ORDER BY h.fqdn",
     )
     .fetch_all(&state.db)
     .await?;
@@ -71,19 +77,68 @@ pub struct HostRow {
     pub notes: String,
     pub registered_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub container_runtime: Option<String>,
 }
 
 async fn get_host(
     State(state): State<std::sync::Arc<AppState>>,
     _auth: AuthUser,
     Path(id): Path<Uuid>,
-) -> Result<Json<Host>, fw_core::AppError> {
+) -> Result<Json<HostDetailResponse>, fw_core::AppError> {
     let host: Host = sqlx::query_as("SELECT * FROM hosts WHERE id = $1")
         .bind(id)
         .fetch_optional(&state.db)
         .await?
         .ok_or_else(|| fw_core::AppError::NotFound("Host not found".to_string()))?;
-    Ok(Json(host))
+
+    // Fetch container_runtime from the latest check-in's os_info
+    let container_runtime: Option<String> = sqlx::query_scalar(
+        "SELECT os_info->>'container_runtime' FROM agent_check_ins
+         WHERE host_id = $1 ORDER BY checked_in_at DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?
+    .flatten();
+
+    Ok(Json(HostDetailResponse {
+        id: host.id,
+        fqdn: host.fqdn,
+        ip_address: host.ip_address,
+        display_name: host.display_name,
+        os_family: host.os_family,
+        os_name: host.os_name,
+        arch: host.arch,
+        agent_version: host.agent_version,
+        health_status: host.health_status,
+        last_health_at: host.last_health_at,
+        last_sync_at: host.last_sync_at,
+        agent_port: host.agent_port,
+        notes: host.notes,
+        registered_at: host.registered_at,
+        updated_at: host.updated_at,
+        container_runtime,
+    }))
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct HostDetailResponse {
+    pub id: Uuid,
+    pub fqdn: String,
+    pub ip_address: String,
+    pub display_name: String,
+    pub os_family: Option<String>,
+    pub os_name: Option<String>,
+    pub arch: Option<String>,
+    pub agent_version: Option<String>,
+    pub health_status: fw_core::models::HostHealthStatus,
+    pub last_health_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_sync_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub agent_port: i32,
+    pub notes: String,
+    pub registered_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub container_runtime: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]

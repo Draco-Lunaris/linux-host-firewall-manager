@@ -279,7 +279,16 @@ export default function HostsPage() {
                     <TableCell>{h.fqdn}</TableCell>
                     <TableCell>{h.display_name}</TableCell>
                     <TableCell>{h.ip_address}</TableCell>
-                    <TableCell>{h.os_name ?? h.os_family ?? '—'}</TableCell>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        {h.os_name ?? h.os_family ?? '—'}
+                        {h.container_runtime && (
+                          <Tooltip title={`Running in ${h.container_runtime} container`}>
+                            <Chip size="small" label={h.container_runtime} variant="outlined" sx={{ height: 20, fontSize: '0.7rem' }} />
+                          </Tooltip>
+                        )}
+                      </Box>
+                    </TableCell>
                     <TableCell>
                       <Chip size="small" label={h.health_status} color={statusColor(h.health_status)} />
                     </TableCell>

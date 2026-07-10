@@ -23,10 +23,16 @@ export interface Host {
   health_status: HostHealthStatus
   os_family?: string
   os_name?: string
+  arch?: string
   agent_version?: string
-  patches_missing: number
+  agent_port?: number
+  notes?: string
+  last_health_at?: string
+  last_sync_at?: string
   registered_at: string
+  updated_at?: string
   health_check_status?: 'all_healthy' | 'some_unhealthy' | 'none'
+  container_runtime?: string | null
 }
 
 export interface CreateHostRequest {
