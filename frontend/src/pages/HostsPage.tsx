@@ -38,7 +38,7 @@ export default function HostsPage() {
   const [conflictModal, setConflictModal] = useState<{ request: EnrollmentRequest; existingHost: Host } | null>(null)
 
   // ── Sorting state ────────────────────────────────────────────────────────
-  type SortKey = 'fqdn' | 'display_name' | 'ip_address' | 'os' | 'health_status' | 'health_check_status' | 'crl_status' | 'agent_version'
+  type SortKey = 'fqdn' | 'display_name' | 'ip_address' | 'os' | 'health_status' | 'health_check_status' | 'agent_version'
   const [sortKey, setSortKey] = useState<SortKey | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
@@ -232,9 +232,6 @@ export default function HostsPage() {
                   <TableSortLabel active={sortKey === 'health_check_status'} direction={sortKey === 'health_check_status' ? sortDir : 'asc'} onClick={() => handleSortChange('health_check_status')}>Checks</TableSortLabel>
                 </TableCell>
                 <TableCell>
-                  <TableSortLabel active={sortKey === 'crl_status'} direction={sortKey === 'crl_status' ? sortDir : 'asc'} onClick={() => handleSortChange('crl_status')}>CRL</TableSortLabel>
-                </TableCell>
-                <TableCell>
                   <TableSortLabel active={sortKey === 'agent_version'} direction={sortKey === 'agent_version' ? sortDir : 'asc'} onClick={() => handleSortChange('agent_version')}>Agent</TableSortLabel>
                 </TableCell>
                 {canWrite && <TableCell>Actions</TableCell>}
@@ -293,19 +290,6 @@ export default function HostsPage() {
                         <Tooltip title="Some checks unhealthy"><CancelIcon color="error" fontSize="small" /></Tooltip>
                       ) : (
                         <Tooltip title="No checks configured"><RemoveIcon color="disabled" fontSize="small" /></Tooltip>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {h.crl_status === 'valid' ? (
-                        <Tooltip title="CRL valid"><VerifiedUserIcon color="success" fontSize="small" /></Tooltip>
-                      ) : h.crl_status === 'expired' ? (
-                        <Tooltip title="CRL expired"><WarningAmberIcon color="warning" fontSize="small" /></Tooltip>
-                      ) : h.crl_status === 'missing' ? (
-                        <Tooltip title="CRL missing"><WarningAmberIcon color="warning" fontSize="small" /></Tooltip>
-                      ) : h.crl_status === 'invalid' ? (
-                        <Tooltip title="CRL invalid — security event"><SecurityIcon color="error" fontSize="small" /></Tooltip>
-                      ) : (
-                        <Tooltip title="CRL status not available (agent version does not support CRL)"><RemoveIcon color="disabled" fontSize="small" /></Tooltip>
                       )}
                     </TableCell>
                     <TableCell>

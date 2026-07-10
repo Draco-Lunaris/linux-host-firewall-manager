@@ -22,7 +22,7 @@ async fn poll_health(db: &PgPool) -> Result<(), sqlx::Error> {
 
     for (host_id, fqdn, ip) in hosts {
         // In production: call fw_agent_client::AgentClient::health()
-        // Update hosts.health_status, hosts.crl_status, etc.
+        // Update hosts.health_status, etc.
         tracing::debug!(host = %host_id, fqdn = %fqdn, ip = ?ip, "Polling health");
     }
 

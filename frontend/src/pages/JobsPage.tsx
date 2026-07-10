@@ -29,7 +29,6 @@ import {
   ExpandMore,
   Refresh as RefreshIcon,
   Replay as ReplayIcon,
-  SystemUpdate as SystemUpdateIcon,
   Wifi as WifiIcon,
   WifiOff as WifiOffIcon,
 } from '@mui/icons-material'
@@ -60,11 +59,10 @@ function StatusChip({ status }: { status: JobStatus }) {
 // ── Kind label ────────────────────────────────────────────────────────────────
 function kindLabel(kind: JobKind): string {
   const map: Record<JobKind, string> = {
-    patch_apply: 'Patch Apply',
-    patch_remove: 'Patch Remove',
+    rule_apply: 'Rule Apply',
+    rule_remove: 'Rule Remove',
     reboot: 'Reboot',
     rollback: 'Rollback',
-    self_upgrade: 'Agent Upgrade',
   }
   return map[kind]
 }
@@ -93,7 +91,7 @@ function HostDetailTable({ hosts, kind }: { hosts: PatchJobHost[]; kind: JobKind
           <TableRow>
             <TableCell>Host</TableCell>
             <TableCell>Status</TableCell>
-            {kind === 'self_upgrade' && <TableCell>Phase</TableCell>}
+
             <TableCell>Agent Job ID</TableCell>
             <TableCell>Retries</TableCell>
             <TableCell>Error</TableCell>
@@ -103,22 +101,12 @@ function HostDetailTable({ hosts, kind }: { hosts: PatchJobHost[]; kind: JobKind
         </TableHead>
         <TableBody>
           {hosts.map((h) => {
-            const isReconnecting = kind === 'self_upgrade' && h.status === 'running' && h.output?.toLowerCase().includes('reconnect')
             return (
               <TableRow key={h.id}>
                 <TableCell>{h.host_display_name}</TableCell>
                 <TableCell>
                   <StatusChip status={h.status} />
                 </TableCell>
-                {kind === 'self_upgrade' && (
-                  <TableCell>
-                    {isReconnecting ? (
-                      <Chip size="small" label="Awaiting reconnect" color="info" variant="outlined" />
-                    ) : h.status === 'running' ? (
-                      <Chip size="small" label="Upgrading" color="warning" variant="outlined" />
-                    ) : null}
-                  </TableCell>
-                )}
                 <TableCell>
                   <Typography variant="caption" fontFamily="monospace">
                     {h.agent_job_id ?? '—'}
@@ -207,7 +195,7 @@ function JobRow({
         </TableCell>
         <TableCell>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            {job.kind === 'self_upgrade' && <SystemUpdateIcon fontSize="small" color="secondary" />}
+
             {kindLabel(job.kind)}
           </Box>
         </TableCell>

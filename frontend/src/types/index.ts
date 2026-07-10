@@ -4,7 +4,7 @@ export type UserRole = 'admin' | 'operator' | 'reporter'
 export type AuthProvider = 'local' | 'azure_sso' | 'keycloak' | 'oidc'
 export type HostHealthStatus = 'pending' | 'healthy' | 'degraded' | 'unreachable'
 export type JobStatus = 'queued' | 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
-export type JobKind = 'patch_apply' | 'patch_remove' | 'reboot' | 'rollback' | 'self_upgrade'
+export type JobKind = 'rule_apply' | 'rule_remove' | 'reboot' | 'rollback'
 
 export interface ApiError {
   error: {
@@ -27,11 +27,6 @@ export interface Host {
   patches_missing: number
   registered_at: string
   health_check_status?: 'all_healthy' | 'some_unhealthy' | 'none'
-  crl_status?: 'valid' | 'expired' | 'missing' | 'invalid'
-  crl_age_seconds?: number
-  crl_next_update?: string
-  gpg_key_status?: 'valid' | 'expired' | 'missing' | 'revoked'
-  gpg_key_expires_at?: string
 }
 
 export interface CreateHostRequest {
@@ -414,45 +409,3 @@ export interface EnrollmentConflictResponse {
   }
 }
 
-// ── Self-Upgrade (Agent Upgrade) ──────────────────────────────────────────
-
-export interface AvailableVersion {
-  id: string
-  version: string
-  download_url: string
-  checksum: string | null
-  file_name: string
-  source: string
-  prerelease: boolean
-  published_at: string | null
-  fetched_at: string
-}
-
-export interface OsPackageMapping {
-  id: string
-  os_name: string
-  os_version: string
-  package_pattern: string
-  display_name: string
-  is_default: boolean
-  created_at: string
-  updated_at: string
-}
-
-export interface TriggerUpgradeRequest {
-  host_ids: string[]
-  target_version: string | null
-  immediate: boolean
-  maintenance_window_id?: string | null
-}
-
-export interface SkippedHost {
-  host_id: string
-  reason: string
-}
-
-export interface TriggerUpgradeResponse {
-  job_id: string
-  host_count: number
-  skipped: SkippedHost[]
-}

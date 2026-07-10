@@ -88,7 +88,7 @@ If the agent binary is corrupted or replaced by an attacker:
 ### Symptoms
 
 - Agent won't start (GPG self-verification fails — SEC-007)
-- Manager reports `agent_binary_hash_changed` audit event
+- Manager reports audit event
 - Manager refuses connections from the agent (version below minimum)
 
 ### Recovery
