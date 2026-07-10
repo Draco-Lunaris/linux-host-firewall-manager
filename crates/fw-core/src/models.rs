@@ -188,13 +188,25 @@ pub enum AuditAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "policy_decision", rename_all = "snake_case")]
-pub enum PolicyDecision {
-    AutoApproved,
-    Flagged,
-    Rejected,
-    ApprovedByAdmin,
-    DeniedByAdmin,
+#[sqlx(type_name = "pending_action_type", rename_all = "snake_case")]
+pub enum PendingActionType {
+    ApplyRules,
+    Rollback,
+    SafeModeOn,
+    SafeModeOff,
+    ReloadConfig,
+    AgentUpgrade,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "pending_action_status", rename_all = "lowercase")]
+pub enum PendingActionStatus {
+    Queued,
+    Pushing,
+    Delivered,
+    Executed,
+    Failed,
+    Expired,
 }
 
 // ============================================================
@@ -470,4 +482,51 @@ pub struct RepoConfig {
     pub sources_config: serde_json::Value,
     pub distro_id: String,
     pub keyring_path: String,
+}
+
+// ============================================================
+// Pull model: check-ins, config overrides, pending actions
+// ============================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct AgentCheckIn {
+    pub id: Uuid,
+    pub host_id: Uuid,
+    pub rules_hash: String,
+    pub agent_version: String,
+    pub backend_type: String,
+    pub os_info: serde_json::Value,
+    pub uptime_seconds: i64,
+    pub config_version: i32,
+    pub pending_results: serde_json::Value,
+    pub checked_in_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct HostConfigOverride {
+    pub host_id: Uuid,
+    pub check_in_interval_secs: i32,
+    pub push_enabled: bool,
+    pub safe_mode_enabled: bool,
+    pub backend_override: Option<String>,
+    pub config_version: i32,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PendingAction {
+    pub id: Uuid,
+    pub host_id: Uuid,
+    pub action_type: PendingActionType,
+    pub payload: serde_json::Value,
+    pub reason: String,
+    pub priority: i32,
+    pub status: PendingActionStatus,
+    pub attempts: i32,
+    pub max_attempts: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub first_attempt_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub delivered_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub executed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
 }
