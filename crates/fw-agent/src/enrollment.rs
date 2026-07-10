@@ -7,7 +7,7 @@
 //! 3. Agent submits CSR + one-time token to manager POST /api/v1/enroll
 //! 4. Manager validates token, signs CSR with intermediate CA
 //! 5. Agent polls GET /api/v1/enroll/status/{polling_token}
-//! 6. On approval, agent receives PkiBundle (ca_chain, server_cert, crl_pem, repo_config)
+//! 6. On approval, agent receives PkiBundle (ca_chain, server_cert, crl_pem, pull_config)
 //! 7. Agent writes certs to /etc/firewall-agent/certs/ and saves config
 
 use anyhow::{Context, Result};

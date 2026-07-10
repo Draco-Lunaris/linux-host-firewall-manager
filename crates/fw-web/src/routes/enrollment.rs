@@ -248,7 +248,6 @@ async fn approve_enrollment(
         ca_chain: vec!["PLACEHOLDER_CA".to_string()],
         server_cert: "PLACEHOLDER_CERT".to_string(),
         crl_pem: None,
-        repo_config: None,
         pull_config: Some(fw_core::models::PullConfigBundle {
             check_in_interval_secs: 900,
             push_enabled: true,

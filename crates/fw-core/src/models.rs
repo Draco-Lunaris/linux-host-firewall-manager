@@ -177,14 +177,6 @@ pub enum AuditAction {
     CaIntermediateIssued,
     CaIntermediateRevoked,
     AuditAnchorMismatch,
-    AgentVersionChanged,
-    AgentBinaryHashChanged,
-    CrlStatusChanged,
-    CrlStaleDetected,
-    CrlInvalid,
-    UpgradeTriggered,
-    BatchUpgradeTriggered,
-    UpgradeVersionRefreshed,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
@@ -302,13 +294,6 @@ pub struct Host {
     pub registered_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     // Security columns (added by later migrations)
-    pub crl_status: Option<String>,
-    pub crl_age_seconds: Option<i64>,
-    pub crl_next_update: Option<DateTime<Utc>>,
-    pub container_runtime: Option<String>,
-    pub container_override: bool,
-    pub agent_binary_hash: Option<String>,
-    pub agent_min_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -485,7 +470,6 @@ pub struct PkiBundle {
     pub ca_chain: Vec<String>,
     pub server_cert: String,
     pub crl_pem: Option<String>,
-    pub repo_config: Option<RepoConfig>,
     #[serde(default)]
     pub pull_config: Option<PullConfigBundle>,
 }
@@ -496,14 +480,6 @@ pub struct PullConfigBundle {
     pub push_enabled: bool,
     pub config_version: i32,
     pub manager_check_in_url: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RepoConfig {
-    pub gpg_public_key: String,
-    pub sources_config: serde_json::Value,
-    pub distro_id: String,
-    pub keyring_path: String,
 }
 
 // ============================================================

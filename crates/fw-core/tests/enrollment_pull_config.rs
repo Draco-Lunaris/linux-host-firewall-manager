@@ -10,7 +10,6 @@ mod tests {
             ca_chain: vec!["-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----".to_string()],
             server_cert: "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----".to_string(),
             crl_pem: None,
-            repo_config: None,
             pull_config: Some(PullConfigBundle {
                 check_in_interval_secs: 900,
                 push_enabled: true,
@@ -30,7 +29,6 @@ mod tests {
             ca_chain: vec!["ca".to_string()],
             server_cert: "cert".to_string(),
             crl_pem: None,
-            repo_config: None,
             pull_config: None,
         };
         let json = serde_json::to_string(&bundle).unwrap();
@@ -44,7 +42,6 @@ mod tests {
             "ca_chain": ["ca"],
             "server_cert": "cert",
             "crl_pem": null,
-            "repo_config": null,
             "pull_config": {
                 "check_in_interval_secs": 300,
                 "push_enabled": false,
