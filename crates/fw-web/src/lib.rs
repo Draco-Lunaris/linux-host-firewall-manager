@@ -141,6 +141,7 @@ pub fn build_router(state: AppState) -> Router<()> {
         routes::auth::public_router().layer(GovernorLayer::new(Arc::clone(&auth_governor)));
 
     let protected_api = Router::new()
+        .route("/status/fleet", get(routes::health::fleet_status_handler))
         .nest("/auth", routes::auth::protected_router())
         .nest("/hosts", routes::hosts::router())
         .nest("/groups", routes::groups::router())
@@ -165,7 +166,6 @@ pub fn build_router(state: AppState) -> Router<()> {
 
     Router::new()
         .route("/status/health", get(routes::health::health_handler))
-        .route("/status/fleet", get(routes::health::fleet_status_handler))
         .nest("/api/v1/auth", auth_public_router)
         .nest("/api/v1", enrollment_router)
         .nest("/api/v1", protected_api)
