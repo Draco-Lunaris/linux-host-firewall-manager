@@ -52,7 +52,7 @@ import {
   Security as SecurityIcon,
   WarningAmber as WarningAmberIcon,
 } from '@mui/icons-material'
-import { apiClient, hostsApi, maintenanceWindowsApi, healthChecksApi, certsApi, upgradesApi } from '../api/client'
+import { apiClient, hostsApi, maintenanceWindowsApi, healthChecksApi, certsApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import type {
   CreateHostRequest,
@@ -696,47 +696,10 @@ export default function HostDetailPage() {
       .catch(() => setCertExists(false))
   }, [id])
 
-  // ── Fetch available versions for upgrade badge ────────────────────────────
-  useEffect(() => {
-    upgradesApi.listAvailableVersions()
-      .then(res => setAvailableVersions(res.data))
-      .catch(() => { /* ignore */ })
-  }, [])
-
-  // ── Helper: check if newer version available ──────────────────────────────
-  const isNewerVersionAvailable = (): boolean => {
-    if (!host?.agent_version) return false
-    const current = String(host.agent_version)
-    return availableVersions.some(v => {
-      if (v.prerelease) return false
-      return v.version.localeCompare(current, undefined, { numeric: true, sensitivity: 'base' }) > 0
-    })
-  }
-
-  // ── Helper: open upgrade dialog ───────────────────────────────────────────
-  const openUpgradeDialog = () => {
-    setUpgradeTargetVersion(null)
-    setUpgradeImmediate(true)
-    setUpgradeDialogOpen(true)
-  }
-
-  // ── Trigger upgrade handler ───────────────────────────────────────────────
+  // ── Trigger upgrade handler (stub — upgrade UI removed) ───────────────────
   const handleTriggerUpgrade = async () => {
-    if (!id || id === 'new') return
-    setUpgradeLoading(true)
-    try {
-      const req: TriggerUpgradeRequest = {
-        host_ids: [id],
-        target_version: upgradeTargetVersion,
-        immediate: upgradeImmediate,
-      }
-      const res = await upgradesApi.triggerUpgrade(req)
-      const data = res.data
-      const skippedInfo = data.skipped.length > 0
-        ? ` (${data.skipped.length} skipped: ${data.skipped.map(s => s.reason).join(', ')})`
-        : ''
-      showSnack(`Upgrade job created for ${data.host_count} host(s)${skippedInfo}`, 'success')
-      setUpgradeDialogOpen(false)
+    showSnack('Agent upgrade not available in this version', 'info')
+  }
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: { message?: string } } } })
         ?.response?.data?.error?.message ?? 'Failed to trigger upgrade'

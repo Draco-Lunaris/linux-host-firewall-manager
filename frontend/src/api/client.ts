@@ -18,10 +18,6 @@ import type {
   AdminResetPasswordRequest,
   UpdateUserRequest,
   CreateUserRequest,
-  AvailableVersion,
-  TriggerUpgradeRequest,
-  TriggerUpgradeResponse,
-  OsPackageMapping,
 } from '../types'
 
 const BASE_URL = '/api/v1'
