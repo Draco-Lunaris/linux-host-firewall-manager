@@ -700,14 +700,6 @@ export default function HostDetailPage() {
   const handleTriggerUpgrade = async () => {
     showSnack('Agent upgrade not available in this version', 'info')
   }
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: { message?: string } } } })
-        ?.response?.data?.error?.message ?? 'Failed to trigger upgrade'
-      showSnack(msg, 'error')
-    } finally {
-      setUpgradeLoading(false)
-    }
-  }
 
   // ── Fetch windows ─────────────────────────────────────────────────────────
   const fetchWindows = useCallback(async () => {
