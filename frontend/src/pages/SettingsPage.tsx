@@ -93,7 +93,7 @@ export default function SettingsPage() {
   const loadMappings = useCallback(async () => {
     try {
       const { data } = await osPackageMappingsApi.list()
-      setOsMappings(data)
+      setOsMappings(Array.isArray(data) ? data : [])
     } catch {
       // ignore — admin-only endpoint may 403 for non-admins
     }
@@ -104,7 +104,7 @@ export default function SettingsPage() {
   const loadAvailableVersions = useCallback(async () => {
     try {
       const { data } = await upgradesApi.listAvailableVersions()
-      setAvailableVersions(data)
+      setAvailableVersions(Array.isArray(data) ? data : [])
     } catch {
       // ignore — admin-only endpoint may 403 for non-admins
     }

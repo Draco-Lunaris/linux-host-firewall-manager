@@ -172,7 +172,7 @@ export default function HostsPage() {
   const loadAvailableVersions = useCallback(async () => {
     try {
       const res = await upgradesApi.listAvailableVersions()
-      setAvailableVersions(res.data)
+      setAvailableVersions(Array.isArray(res.data) ? res.data : [])
     } catch { /* ignore */ }
   }, [])
 
@@ -236,6 +236,7 @@ export default function HostsPage() {
   // Helper: check if a newer version is available for a host
   const isNewerVersionAvailable = (host: Host): boolean => {
     if (!host.agent_version) return false
+    if (!Array.isArray(availableVersions) || availableVersions.length === 0) return false
     const current = host.agent_version
     return availableVersions.some(v => {
       if (v.prerelease) return false
