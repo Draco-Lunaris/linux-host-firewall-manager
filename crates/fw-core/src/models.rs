@@ -198,6 +198,7 @@ pub enum PolicyDecision {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "pending_action_type", rename_all = "snake_case")]
 pub enum PendingActionType {
     ApplyRules,
@@ -209,6 +210,7 @@ pub enum PendingActionType {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "pending_action_status", rename_all = "lowercase")]
 pub enum PendingActionStatus {
     Queued,
