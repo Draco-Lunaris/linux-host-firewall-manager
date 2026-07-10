@@ -15,7 +15,7 @@ Linux Host Firewall Manager provides a web-based management plane for controllin
 - **Drift Detection** — Agent reports rule snapshots; manager detects and alerts on drift
 - **Secure by Design** — mTLS with internal CA, HS256 (HMAC-SHA256) JWT, Argon2id, TOTP MFA, hash-chained audit log
 - **Self-Enrollment** — CSR-based enrollment with one-time tokens and admin approval
-- **Agent Self-Update** — GPG-signed apt/dnf repo for agent updates
+- **Hybrid Push/Pull** — Agents pull rules on a configurable interval (default 15 min); emergency changes pushed via mTLS with fallback to next check-in
 
 ## Architecture
 
@@ -60,6 +60,37 @@ sudo apt install -y pkg-config libssl-dev postgresql-16
 cargo build --release
 cd frontend && npm ci && npm run build
 ```
+
+## Quick Start
+
+```bash
+# 1. Install the .deb package
+sudo dpkg -i linux-firewall-manager_*.deb
+sudo apt-get install -f  # fix dependencies
+
+# 2. Configure PostgreSQL
+sudo -u postgres psql <<EOF
+CREATE DATABASE firewall_manager;
+CREATE USER firewall_manager WITH PASSWORD 'your_secure_password';
+GRANT ALL PRIVILEGES ON DATABASE firewall_manager TO firewall_manager;
+EOF
+
+# 3. Edit the config
+sudo nano /etc/firewall-manager/config.toml
+
+# 4. Start services
+sudo systemctl enable --now firewall-manager.target
+
+# 5. Retrieve the auto-generated admin password
+sudo journalctl -u firewall-manager-web | grep 'INITIAL ADMIN PASSWORD' -A 4
+
+# 6. Access the web UI
+#    https://your-server-ip:443
+#    Username: admin
+#    Password: (from step 5)
+```
+
+The admin password is generated on first start and shown once in the logs. Change it immediately after first login.
 
 ## License
 

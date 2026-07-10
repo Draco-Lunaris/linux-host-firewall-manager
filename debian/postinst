@@ -73,7 +73,9 @@ case "$1" in
     echo "  4. Check logs: journalctl -u firewall-manager-web -f"
     echo ""
     echo "  5. Access: https://your-server-ip:443"
-    echo "     Default admin: username=admin, password shown in journalctl"
+    echo "     Default admin: username=admin"
+    echo "     Password is generated on first start and shown once in the logs:"
+    echo "       sudo journalctl -u firewall-manager-web | grep 'INITIAL ADMIN PASSWORD' -A 4"
     echo ""
   ;;
   abort-upgrade|abort-remove|abort-deconfigure)
