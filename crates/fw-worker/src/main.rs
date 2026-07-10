@@ -1,13 +1,11 @@
 //! fw-worker — background worker for Linux Host Firewall Manager.
 //!
-//! Responsibilities:
-//! - Job execution (deploy rules to agents via mTLS)
-//! - Health polling (5-min interval)
-//! - Drift polling (15-min interval) — fetch snapshots, detect drift
+//! Responsibilities (hybrid push/pull model):
+//! - Stale agent detection (5-min) — marks hosts degraded/unreachable based on check-in staleness
+//! - Push dispatcher — attempts emergency push of high-priority pending actions
 //! - Audit integrity verification (daily)
 //! - Audit external anchoring (daily — SEC-004)
-//! - Enrollment cleanup (hourly)
-//! - Per-host push serialization (SEC-013)
+//! - Refresh listener (PostgreSQL NOTIFY events)
 
 use fw_core::AppConfig;
 use sqlx::PgPool;
@@ -15,12 +13,11 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 mod audit_anchor;
-mod drift_poller;
-mod health_poller;
-mod job_executor;
+mod push_dispatcher;
 mod refresh_listener;
+mod stale_agent_detector;
 
-const REQUIRED_MIGRATION_COUNT: i32 = 27;
+const REQUIRED_MIGRATION_COUNT: i32 = 29;
 const SCHEMA_CHECK_TIMEOUT_SECS: u64 = 120;
 
 #[tokio::main]
@@ -44,29 +41,26 @@ async fn main() -> anyhow::Result<()> {
 
     // Spawn background tasks
     let db1 = db.clone();
-    tokio::spawn(async move { health_poller::run(db1).await });
+    tokio::spawn(async move { stale_agent_detector::run(db1).await });
 
     let db2 = db.clone();
-    let interval = config.worker.drift_poll_interval_secs;
-    tokio::spawn(async move { drift_poller::run(db2, interval).await });
+    tokio::spawn(async move { audit_anchor::run(db2).await });
 
     let db3 = db.clone();
-    tokio::spawn(async move { audit_anchor::run(db3).await });
+    tokio::spawn(async move { refresh_listener::run(db3).await });
 
+    // Main loop: push dispatcher (emergency push only)
     let db4 = db.clone();
-    tokio::spawn(async move { refresh_listener::run(db4).await });
-
-    // Main loop: job executor
-    let db5 = db.clone();
-    tokio::spawn(async move { job_executor::run(db5, semaphore).await });
+    let sem = semaphore.clone();
+    tokio::spawn(async move { push_dispatcher::run(db4, sem).await });
 
     // Heartbeat
-    let db6 = db.clone();
+    let db5 = db.clone();
     tokio::spawn(async move {
         loop {
             let _ = sqlx::query("INSERT INTO worker_heartbeat (id, last_seen, worker_version) VALUES (1, NOW(), $1) ON CONFLICT (id) DO UPDATE SET last_seen = NOW(), worker_version = $1")
                 .bind(env!("CARGO_PKG_VERSION"))
-                .execute(&*db6)
+                .execute(&*db5)
                 .await;
             tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
         }
