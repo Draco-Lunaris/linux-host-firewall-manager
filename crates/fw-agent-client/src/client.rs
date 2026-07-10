@@ -1,7 +1,8 @@
 #![allow(clippy::redundant_closure)]
 use crate::error::AgentClientError;
-use crate::types::{AgentEnvelope, ApplyResult, HealthResponse, RuleSnapshot, SystemInfo};
+use crate::types::{AgentEnvelope, ApplyResult, DeployedRule};
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 pub const DEFAULT_AGENT_PORT: u16 = 12443;
@@ -43,42 +44,24 @@ impl AgentClient {
         })
     }
 
-    pub async fn health(&self) -> Result<HealthResponse, AgentClientError> {
+    /// Push a generic pending action to the agent (emergency push).
+    /// Used by the push dispatcher for high-priority actions that can't wait for check-in.
+    pub async fn push_action(&self, req: &PushActionRequest) -> Result<PushActionResponse, AgentClientError> {
         let resp = self
             .client
-            .get(format!("{}/api/v1/health", self.base_url))
+            .post(format!("{}/api/v1/actions/execute", self.base_url))
+            .json(req)
             .send()
             .await?
-            .json::<AgentEnvelope<HealthResponse>>()
+            .json::<AgentEnvelope<PushActionResponse>>()
             .await?;
         self.unwrap_envelope(resp)
     }
 
-    pub async fn system_info(&self) -> Result<SystemInfo, AgentClientError> {
-        let resp = self
-            .client
-            .get(format!("{}/api/v1/system/info", self.base_url))
-            .send()
-            .await?
-            .json::<AgentEnvelope<SystemInfo>>()
-            .await?;
-        self.unwrap_envelope(resp)
-    }
-
-    pub async fn get_snapshot(&self) -> Result<RuleSnapshot, AgentClientError> {
-        let resp = self
-            .client
-            .get(format!("{}/api/v1/rules/snapshot", self.base_url))
-            .send()
-            .await?
-            .json::<AgentEnvelope<RuleSnapshot>>()
-            .await?;
-        self.unwrap_envelope(resp)
-    }
-
+    /// Push rules to the agent immediately (emergency deployment).
     pub async fn deploy_rules(
         &self,
-        rules: &[crate::types::DeployedRule],
+        rules: &[DeployedRule],
         job_id: &str,
     ) -> Result<ApplyResult, AgentClientError> {
         let body = serde_json::json!({
@@ -96,10 +79,31 @@ impl AgentClient {
         self.unwrap_envelope(resp)
     }
 
+    /// Reset all rules on the agent (emergency rollback).
     pub async fn reset_rules(&self) -> Result<(), AgentClientError> {
         let _ = self
             .client
             .post(format!("{}/api/v1/rules/reset", self.base_url))
+            .send()
+            .await?;
+        Ok(())
+    }
+
+    /// Enable safe mode on the agent (emergency lockdown).
+    pub async fn enable_safe_mode(&self) -> Result<(), AgentClientError> {
+        let _ = self
+            .client
+            .post(format!("{}/api/v1/safe-mode/enable", self.base_url))
+            .send()
+            .await?;
+        Ok(())
+    }
+
+    /// Disable safe mode on the agent.
+    pub async fn disable_safe_mode(&self) -> Result<(), AgentClientError> {
+        let _ = self
+            .client
+            .post(format!("{}/api/v1/safe-mode/disable", self.base_url))
             .send()
             .await?;
         Ok(())
@@ -123,4 +127,20 @@ impl AgentClient {
             message: "response had no data".to_string(),
         })
     }
+}
+
+/// Request to push a pending action to an agent.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PushActionRequest {
+    pub action_id: uuid::Uuid,
+    pub action_type: String,
+    pub payload: serde_json::Value,
+    pub reason: String,
+}
+
+/// Response from the agent after executing a pushed action.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PushActionResponse {
+    pub accepted: bool,
+    pub error_message: Option<String>,
 }

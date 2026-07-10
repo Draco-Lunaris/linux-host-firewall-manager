@@ -18,35 +18,6 @@ pub struct AgentError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HealthResponse {
-    pub status: String,
-    pub uptime: u64,
-    pub version: String,
-    pub crl_status: String,
-    pub crl_age_seconds: Option<u64>,
-    pub crl_next_update: Option<String>,
-    pub gpg_key_status: String,
-    pub backend_active: String,
-    pub container_runtime: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SystemInfo {
-    pub hostname: String,
-    pub os: String,
-    pub kernel: String,
-    pub arch: String,
-    pub backend_detected: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuleSnapshot {
-    pub rules: Vec<DeployedRule>,
-    pub snapshot_hash: String,
-    pub rule_count: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeployedRule {
     pub name: String,
     pub action: String,
