@@ -41,11 +41,9 @@ import {
   Delete as DeleteIcon,
   Edit as EditIcon,
   MonitorHeart as MonitorHeartIcon,
-  NewReleases as NewReleasesIcon,
   PlayArrow as PlayArrowIcon,
   Remove as RemoveIcon,
   Schedule as ScheduleIcon,
-  SystemUpdate as SystemUpdateIcon,
   VpnKey as VpnKeyIcon,
   ContentCopy as CopyIcon,
   VerifiedUser as VerifiedUserIcon,
@@ -63,8 +61,6 @@ import type {
   HealthCheckWithResult,
   CreateHealthCheckRequest,
   UpdateHealthCheckRequest,
-  AvailableVersion,
-  TriggerUpgradeRequest,
 } from '../types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -629,11 +625,7 @@ export default function HostDetailPage() {
   const [savingHost, setSavingHost] = useState(false)
 
   // ── Upgrade state ──────────────────────────────────────────────────────────
-  const [availableVersions, setAvailableVersions] = useState<AvailableVersion[]>([])
-  const [upgradeDialogOpen, setUpgradeDialogOpen] = useState(false)
-  const [upgradeTargetVersion, setUpgradeTargetVersion] = useState<string | null>(null)
-  const [upgradeImmediate, setUpgradeImmediate] = useState(true)
-  const [upgradeLoading, setUpgradeLoading] = useState(false)
+
 
   const enterEdit = () => {
     setEditFqdn(String(host?.fqdn ?? ''))
@@ -698,7 +690,7 @@ export default function HostDetailPage() {
 
   // ── Trigger upgrade handler (stub — upgrade UI removed) ───────────────────
   const handleTriggerUpgrade = async () => {
-    showSnack('Agent upgrade not available in this version', 'info')
+    showSnack('Agent upgrade not available in this version', 'success')
   }
 
   // ── Fetch windows ─────────────────────────────────────────────────────────
@@ -1011,18 +1003,7 @@ export default function HostDetailPage() {
                 Re-issue Certificate
               </Button>
             )}
-            {!editing && canWrite && (
-              <Button
-                variant="outlined"
-                size="small"
-                color="secondary"
-                startIcon={<SystemUpdateIcon />}
-                onClick={() => { setUpgradeTargetVersion(null); setUpgradeImmediate(true); setUpgradeDialogOpen(true) }}
-              >
-                Upgrade Agent
-              </Button>
-            )}
-          </Box>
+           </Box>
         </Box>
         <Divider sx={{ mb: 2 }} />
         <Grid container spacing={2}>
@@ -1063,22 +1044,7 @@ export default function HostDetailPage() {
             )}
             <Grid size={{ xs: 12, sm: 6, md: 4 }}>
               <Typography variant="caption" color="text.secondary" display="block">AGENT VERSION</Typography>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Typography variant="body2">{String(host?.agent_version ?? '—')}</Typography>
-                {isNewerVersionAvailable() && (
-                  <Tooltip title="Upgrade available">
-                    <Chip
-                      size="small"
-                      icon={<NewReleasesIcon />}
-                      label="Upgrade available"
-                      color="secondary"
-                      variant="outlined"
-                      sx={{ cursor: canWrite ? 'pointer' : 'default' }}
-                      onClick={canWrite ? () => openUpgradeDialog() : undefined}
-                    />
-                  </Tooltip>
-                )}
-              </Box>
+              <Typography variant="body2">{String(host?.agent_version ?? '—')}</Typography>
             </Grid>
           </>)}
         </Grid>
@@ -1487,63 +1453,6 @@ export default function HostDetailPage() {
       />
 
       {/* Snackbar */}
-      {/* ── Upgrade Dialog ──────────────────────────────────────────────── */}
-      <Dialog open={upgradeDialogOpen} onClose={() => setUpgradeDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <SystemUpdateIcon /> Upgrade Agent
-        </DialogTitle>
-        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
-          <Typography variant="body2" color="text.secondary">
-            Upgrade the agent on <strong>{String(host?.fqdn ?? '')}</strong> to a new version.
-          </Typography>
-          <FormControl fullWidth>
-            <InputLabel>Target Version</InputLabel>
-            <Select
-              value={upgradeTargetVersion ?? '__latest__'}
-              label="Target Version"
-              onChange={e => setUpgradeTargetVersion(e.target.value === '__latest__' ? null : e.target.value)}
-            >
-              <MenuItem value="__latest__">Latest (auto)</MenuItem>
-              {availableVersions.filter(v => !v.prerelease).map(v => (
-                <MenuItem key={v.id} value={v.version}>{v.version}</MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Button
-              variant={upgradeImmediate ? 'contained' : 'outlined'}
-              size="small"
-              onClick={() => setUpgradeImmediate(true)}
-            >
-              Immediate
-            </Button>
-            <Button
-              variant={!upgradeImmediate ? 'contained' : 'outlined'}
-              size="small"
-              onClick={() => setUpgradeImmediate(false)}
-            >
-              Scheduled
-            </Button>
-          </Box>
-          {!upgradeImmediate && (
-            <Typography variant="caption" color="text.secondary">
-              Scheduled upgrades will use the next available maintenance window.
-            </Typography>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setUpgradeDialogOpen(false)}>Cancel</Button>
-          <Button
-            variant="contained"
-            color="secondary"
-            onClick={handleTriggerUpgrade}
-            disabled={upgradeLoading}
-          >
-            {upgradeLoading ? <CircularProgress size={20} /> : 'Upgrade'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
       <Snackbar
         open={snackbar.open}
         autoHideDuration={4000}
