@@ -24,7 +24,7 @@ pub struct AgentConfig {
     pub pull: PullConfig,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct PullConfig {
     #[serde(default = "default_check_in_interval")]
     pub check_in_interval_secs: u32,

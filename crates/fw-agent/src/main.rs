@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
 use fw_agent::pull_client;
+use anyhow::Context;
 
 mod backend;
 mod compiler;
