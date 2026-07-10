@@ -188,6 +188,16 @@ pub enum AuditAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "policy_decision", rename_all = "snake_case")]
+pub enum PolicyDecision {
+    AutoApproved,
+    Flagged,
+    Rejected,
+    ApprovedByAdmin,
+    DeniedByAdmin,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "pending_action_type", rename_all = "snake_case")]
 pub enum PendingActionType {
     ApplyRules,
