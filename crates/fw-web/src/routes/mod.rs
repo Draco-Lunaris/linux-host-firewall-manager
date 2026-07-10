@@ -1,3 +1,4 @@
+pub mod agent_api;
 pub mod auth;
 pub mod ca;
 pub mod certificates;

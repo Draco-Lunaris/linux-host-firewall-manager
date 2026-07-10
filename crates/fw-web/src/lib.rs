@@ -166,6 +166,7 @@ pub fn build_router(state: AppState) -> Router<()> {
 
     Router::new()
         .route("/status/health", get(routes::health::health_handler))
+        .nest("/api/v1/agent", routes::agent_api::router())
         .nest("/api/v1/auth", auth_public_router)
         .nest("/api/v1", enrollment_router)
         .nest("/api/v1", protected_api)
