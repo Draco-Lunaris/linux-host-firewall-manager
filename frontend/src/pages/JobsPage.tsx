@@ -74,7 +74,7 @@ function fmtDate(iso?: string): string {
 }
 
 // ── Per-host detail table ─────────────────────────────────────────────────────
-function HostDetailTable({ hosts, kind }: { hosts: PatchJobHost[]; kind: JobKind }) {
+function HostDetailTable({ hosts }: { hosts: PatchJobHost[] }) {
   if (hosts.length === 0) {
     return (
       <Box py={2} px={3}>
@@ -295,7 +295,7 @@ function JobRow({
                 {detailError}
               </Alert>
             ) : detail ? (
-              <HostDetailTable hosts={detail.hosts} kind={job.kind} />
+              <HostDetailTable hosts={detail.hosts} />
             ) : null}
           </Collapse>
         </TableCell>

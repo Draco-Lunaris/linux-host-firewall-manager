@@ -46,9 +46,6 @@ import {
   Schedule as ScheduleIcon,
   VpnKey as VpnKeyIcon,
   ContentCopy as CopyIcon,
-  VerifiedUser as VerifiedUserIcon,
-  Security as SecurityIcon,
-  WarningAmber as WarningAmberIcon,
 } from '@mui/icons-material'
 import { apiClient, hostsApi, maintenanceWindowsApi, healthChecksApi, certsApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
