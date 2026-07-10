@@ -226,13 +226,35 @@ async fn approve_enrollment(
     .fetch_one(&state.db)
     .await?;
 
+    // Create default host config overrides for the pull model
+    let _ = sqlx::query(
+        "INSERT INTO host_config_overrides (host_id, check_in_interval_secs, push_enabled, safe_mode_enabled, config_version)
+         VALUES ($1, 900, TRUE, FALSE, 1) ON CONFLICT (host_id) DO NOTHING",
+    )
+    .bind(host_id)
+    .execute(&state.db)
+    .await;
+
+    // Build the manager check-in URL
+    let manager_check_in_url = format!(
+        "https://{}:{}/api/v1/agent/check-in",
+        state.config.server.host,
+        state.config.server.port
+    );
+
     // Issue cert (stub — CA implementation will fill this in)
-    // For now, create a placeholder PKI bundle
+    // For now, create a placeholder PKI bundle with pull config
     let pki_bundle = fw_core::models::PkiBundle {
         ca_chain: vec!["PLACEHOLDER_CA".to_string()],
         server_cert: "PLACEHOLDER_CERT".to_string(),
         crl_pem: None,
         repo_config: None,
+        pull_config: Some(fw_core::models::PullConfigBundle {
+            check_in_interval_secs: 900,
+            push_enabled: true,
+            config_version: 1,
+            manager_check_in_url,
+        }),
     };
 
     // Cache the bundle for single-retrieval

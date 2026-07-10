@@ -486,6 +486,16 @@ pub struct PkiBundle {
     pub server_cert: String,
     pub crl_pem: Option<String>,
     pub repo_config: Option<RepoConfig>,
+    #[serde(default)]
+    pub pull_config: Option<PullConfigBundle>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PullConfigBundle {
+    pub check_in_interval_secs: i32,
+    pub push_enabled: bool,
+    pub config_version: i32,
+    pub manager_check_in_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
