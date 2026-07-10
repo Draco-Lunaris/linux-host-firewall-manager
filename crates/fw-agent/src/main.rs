@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
+use fw_agent::pull_client;
+
 mod backend;
 mod compiler;
 mod config;
@@ -7,6 +9,7 @@ mod drift;
 mod enrollment;
 mod mtls;
 mod protected_cidrs;
+mod pull_loop;
 mod routes;
 mod safe_mode;
 mod server;
@@ -66,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
             enrollment::enroll(&manager_url, &token, &fqdn).await?;
         }
         Some(Commands::Run) => {
-            server::run().await?;
+            run_daemon().await?;
         }
         Some(Commands::Status) => {
             status_report().await?;
@@ -97,6 +100,74 @@ async fn main() -> anyhow::Result<()> {
             println!("Run 'fw-agent <command> --help' for more information.");
         }
     }
+    Ok(())
+}
+
+/// Run the agent daemon — starts both the pull loop (primary) and the push server (secondary).
+async fn run_daemon() -> anyhow::Result<()> {
+    let cfg = config::AgentConfig::load()
+        .ok_or_else(|| anyhow::anyhow!("Agent not configured — run 'fw-agent enroll' first"))?;
+
+    let host_id = cfg
+        .host_id
+        .as_ref()
+        .and_then(|s| uuid::Uuid::parse_str(s).ok())
+        .ok_or_else(|| anyhow::anyhow!("No host_id in config — re-enroll required"))?;
+
+    // Load mTLS certs for the pull client
+    let cert_dir = &cfg.cert_dir;
+    let client_cert = std::fs::read_to_string(format!("{}/server.pem", cert_dir))
+        .or_else(|_| std::fs::read_to_string(format!("{}/agent.pem", cert_dir)))
+        .context("Failed to read client certificate")?;
+    let client_key = std::fs::read_to_string(format!("{}/server.key.pem", cert_dir))
+        .or_else(|_| std::fs::read_to_string(format!("{}/agent.key.pem", cert_dir)))
+        .context("Failed to read client key")?;
+    let ca_cert = std::fs::read_to_string(format!("{}/ca.pem", cert_dir))
+        .context("Failed to read CA certificate")?;
+
+    // Create the pull client
+    let manager_url = if cfg.pull.manager_check_in_url.is_empty() {
+        cfg.manager_url.clone()
+    } else {
+        cfg.pull.manager_check_in_url.clone()
+    };
+    let pull_client = pull_client::PullClient::new(
+        &manager_url,
+        host_id,
+        &client_cert,
+        &client_key,
+        &ca_cert,
+    )?;
+
+    // Detect the firewall backend
+    let backend = backend::detect()
+        .ok_or_else(|| anyhow::anyhow!("No firewall backend detected (ufw/firewalld/nftables required)"))?;
+    let backend: std::sync::Arc<dyn backend::FirewallBackend> = std::sync::Arc::from(backend);
+
+    let config = std::sync::Arc::new(tokio::sync::RwLock::new(cfg.clone()));
+
+    // Start the pull loop as a background task
+    let pull_backend = backend.clone();
+    let pull_config = config.clone();
+    tokio::spawn(async move {
+        pull_loop::run_pull_loop(pull_backend, pull_config, pull_client).await;
+    });
+    tracing::info!("Pull loop started (primary mode)");
+
+    // Start the push server (secondary, for emergency push) if push_enabled
+    if cfg.pull.push_enabled {
+        tracing::info!("Push server starting (secondary mode, for emergency push)");
+        // The existing server::run() handles the mTLS push server
+        // For now, we just log — the push server will be wired in Phase 4
+        // when we rework the worker's push dispatcher
+        tokio::signal::ctrl_c().await?;
+        tracing::info!("Agent shutting down");
+    } else {
+        tracing::info!("Push server disabled — pull-only mode");
+        tokio::signal::ctrl_c().await?;
+        tracing::info!("Agent shutting down");
+    }
+
     Ok(())
 }
 

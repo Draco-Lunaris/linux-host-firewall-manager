@@ -20,6 +20,28 @@ pub struct AgentConfig {
     pub safe_mode_timeout_secs: u64,
     #[serde(default)]
     pub protected_cidrs: Vec<String>,
+    #[serde(default)]
+    pub pull: PullConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PullConfig {
+    #[serde(default = "default_check_in_interval")]
+    pub check_in_interval_secs: u32,
+    #[serde(default)]
+    pub manager_check_in_url: String,
+    #[serde(default = "default_push_enabled")]
+    pub push_enabled: bool,
+    #[serde(default)]
+    pub config_version: i32,
+}
+
+fn default_check_in_interval() -> u32 {
+    900
+}
+
+fn default_push_enabled() -> bool {
+    true
 }
 
 fn default_port() -> u16 {
@@ -51,6 +73,12 @@ impl Default for AgentConfig {
             safe_mode_enabled: false,
             safe_mode_timeout_secs: default_safe_mode_timeout(),
             protected_cidrs: Vec::new(),
+            pull: PullConfig {
+                check_in_interval_secs: default_check_in_interval(),
+                manager_check_in_url: String::new(),
+                push_enabled: default_push_enabled(),
+                config_version: 0,
+            },
         }
     }
 }
