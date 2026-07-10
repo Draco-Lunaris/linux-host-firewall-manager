@@ -13,12 +13,11 @@ use anyhow::{Context, Result};
 use fw_core::models::{
     FirewallAction, FirewallDirection, FirewallProtocol, FirewallRule,
 };
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-use crate::backend::{FirewallBackend, BackendError};
+use crate::backend::FirewallBackend;
 use crate::config::AgentConfig;
 use crate::pull_client::{CheckInRequest, CheckInResultRequest, PullClient, RuleDto};
 
@@ -65,7 +64,7 @@ async fn run_pull_cycle(
     let rules_hash = snapshot.hash;
 
     // 2. Gather agent info
-    let backend_status = backend.status().await.context("Failed to get backend status")?;
+    let _backend_status = backend.status().await.context("Failed to get backend status")?;
     let os_info = gather_os_info();
     let uptime = get_uptime_seconds();
 
@@ -120,7 +119,7 @@ async fn run_pull_cycle(
                     action_id: None,
                     success: false,
                     error_message: Some(e.to_string()),
-                    new_rules_hash: rules_hash,
+                    new_rules_hash: rules_hash.clone(),
                 };
                 if let Err(e) = pull_client.report_result(&result_req).await {
                     tracing::warn!(error = %e, "Failed to report error to manager");
