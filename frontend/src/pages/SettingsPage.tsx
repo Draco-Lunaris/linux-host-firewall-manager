@@ -80,7 +80,7 @@ export default function SettingsPage() {
       setPolling(data.polling || {})
       setIpWhitelist(data.ip_whitelist || [])
       setWebTlsStrategy(data.web_tls_strategy || 'internal_ca')
-      setNotification(data.notification || {})
+      setNotification(data.notification ? { ...data.notification, recipients: data.notification.recipients || [] } : { email_enabled: false, email_from: '', recipients: [] })
     } catch {
       setError('Failed to load settings')
     } finally {
