@@ -89,7 +89,6 @@ pub enum JobKind {
     RuleRemove,
     Reboot,
     Rollback,
-    SelfUpgrade,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]

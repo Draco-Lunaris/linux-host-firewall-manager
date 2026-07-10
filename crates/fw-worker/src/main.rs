@@ -17,7 +17,7 @@ mod push_dispatcher;
 mod refresh_listener;
 mod stale_agent_detector;
 
-const REQUIRED_MIGRATION_COUNT: i32 = 29;
+const REQUIRED_MIGRATION_COUNT: i32 = 30;
 const SCHEMA_CHECK_TIMEOUT_SECS: u64 = 120;
 
 #[tokio::main]
