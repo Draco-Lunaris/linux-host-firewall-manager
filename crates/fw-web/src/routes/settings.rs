@@ -3,6 +3,7 @@
 use crate::AppState;
 use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
 use fw_auth::rbac::AuthUser;
+use std::str::FromStr;
 
 pub fn router() -> Router<std::sync::Arc<AppState>> {
     Router::new()
@@ -67,9 +68,50 @@ async fn update_ip_whitelist(
             "Admin role required".to_string(),
         ));
     }
-    let json = serde_json::to_string(&req.entries).unwrap_or_default();
+
+    // Validate each entry is a valid CIDR or IP address
+    let validated: Vec<String> = req
+        .entries
+        .iter()
+        .map(|entry| validate_cidr_or_ip(entry))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|bad| {
+            fw_core::AppError::BadRequest(format!(
+                "Invalid IP/CIDR entry: '{}'. Use formats like 10.0.0.0/8, 192.168.1.0/24, or 10.0.0.1",
+                bad
+            ))
+        })?;
+
+    // Lockout prevention: if the new whitelist is non-empty, the requester's
+    // IP must be within at least one of the entries. This prevents an admin
+    // from accidentally locking themselves out.
+    if !validated.is_empty() {
+        let requester_ip = auth.ip.unwrap_or_else(|| {
+            // If we can't determine the IP, block the update as a safety measure
+            std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+        });
+
+        let covers_requester = validated.iter().any(|entry| {
+            ipnet::IpNet::from_str(entry)
+                .map(|net| net.contains(&requester_ip))
+                .unwrap_or(false)
+        });
+
+        if !covers_requester {
+            return Err(fw_core::AppError::BadRequest(
+                format!(
+                    "Lockout prevention: your IP ({}) is not in the new whitelist. \
+                     Add your IP or subnet to the list before saving, or clear the \
+                     list to allow all IPs.",
+                    requester_ip
+                ),
+            ));
+        }
+    }
+
+    let json = serde_json::to_string(&validated).unwrap_or_default();
     sqlx::query("INSERT INTO system_config (key, value, updated_at) VALUES ('ip_whitelist', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()").bind(&json).execute(&state.db).await?;
-    state.auth_config.update_ip_whitelist(req.entries).await;
+    state.auth_config.update_ip_whitelist(validated).await;
     let _ = fw_core::audit::log_event(
         &state.db,
         "config_changed",
@@ -109,9 +151,23 @@ async fn update_trusted_proxies(
             "Admin role required".to_string(),
         ));
     }
-    let json = serde_json::to_string(&req.entries).unwrap_or_default();
+
+    // Validate each entry is a valid CIDR or IP address
+    let validated: Vec<String> = req
+        .entries
+        .iter()
+        .map(|entry| validate_cidr_or_ip(entry))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|bad| {
+            fw_core::AppError::BadRequest(format!(
+                "Invalid IP/CIDR entry: '{}'. Use formats like 10.0.0.0/8, 192.168.1.0/24, or 10.0.0.1",
+                bad
+            ))
+        })?;
+
+    let json = serde_json::to_string(&validated).unwrap_or_default();
     sqlx::query("INSERT INTO system_config (key, value, updated_at) VALUES ('trusted_proxies', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()").bind(&json).execute(&state.db).await?;
-    state.auth_config.update_trusted_proxies(req.entries).await;
+    state.auth_config.update_trusted_proxies(validated).await;
     Ok(StatusCode::OK)
 }
 
@@ -200,4 +256,32 @@ async fn update_smtp_config(
 #[derive(Debug, serde::Deserialize)]
 pub struct UpdateListRequest {
     pub entries: Vec<String>,
+}
+
+/// Validate that a string is a valid CIDR (e.g. "10.0.0.0/8") or a bare IP
+/// address (e.g. "10.0.0.1"). Bare IPs are normalized to /32 (IPv4) or /128 (IPv6).
+/// Returns the normalized CIDR string on success, or the original (invalid) string
+/// as an error for the caller to include in a user-facing message.
+fn validate_cidr_or_ip(entry: &str) -> Result<String, String> {
+    let trimmed = entry.trim();
+    if trimmed.is_empty() {
+        return Err(entry.to_string());
+    }
+
+    // Try parsing as a CIDR first (e.g. "10.0.0.0/8")
+    if let Ok(net) = ipnet::IpNet::from_str(trimmed) {
+        return Ok(net.to_string());
+    }
+
+    // Try parsing as a bare IP address — normalize to /32 or /128
+    if let Ok(ip) = trimmed.parse::<std::net::IpAddr>() {
+        let net = match ip {
+            std::net::IpAddr::V4(v4) => ipnet::IpNet::V4(ipnet::Ipv4Net::new(v4, 32).unwrap()),
+            std::net::IpAddr::V6(v6) => ipnet::IpNet::V6(ipnet::Ipv6Net::new(v6, 128).unwrap()),
+        };
+        return Ok(net.to_string());
+    }
+
+    // Neither valid CIDR nor valid IP
+    Err(entry.to_string())
 }
