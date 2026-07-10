@@ -3,7 +3,7 @@ import {
   Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button,
   CircularProgress, Container, Dialog, DialogActions, DialogContent, DialogTitle,
   FormControl, FormControlLabel, Grid, IconButton, InputLabel, MenuItem, Select,
-  Chip, Snackbar, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField,
+  Chip, Snackbar, Switch, Table, TableBody, TableCell, TextField,
   Toolbar, Typography,
 } from '@mui/material'
 import type { AxiosError } from 'axios'
@@ -15,8 +15,6 @@ import CloudIcon from '@mui/icons-material/Cloud'
 import EmailIcon from '@mui/icons-material/Email'
 import VpnKeyIcon from '@mui/icons-material/VpnKey'
 import ExploreIcon from '@mui/icons-material/Explore'
-import EditIcon from '@mui/icons-material/Edit'
-import RefreshIcon from '@mui/icons-material/Refresh'
 import { settingsApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import type { OidcConfigResponse, OidcDiscoveryResult, SmtpConfig, PollingConfig, NotificationConfig } from '../types'
@@ -53,7 +51,6 @@ export default function SettingsPage() {
   const [discoveryResult, setDiscoveryResult] = useState<OidcDiscoveryResult | null>(null)
   const [smtpTestResult, setSmtpTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   const loadSettings = useCallback(async () => {
@@ -144,7 +141,7 @@ export default function SettingsPage() {
   const handleSave = async () => {
     setSaving(true)
     setError(null)
-    setSuccess(null)
+    setError(null)
     try {
       await settingsApi.update({
         oidc: { ...oidc },
@@ -157,7 +154,7 @@ export default function SettingsPage() {
           email_from: smtp.from,
         },
       })
-      setSuccess('Settings saved successfully')
+      setError('Settings saved successfully')
     } catch (err: unknown) {
       const axiosErr = err as AxiosError<{ error?: { message?: string } }>
       if (axiosErr.response?.status === 403) {
