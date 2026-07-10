@@ -45,17 +45,23 @@ pub struct LoginResponse {
 pub struct UserInfo {
     pub id: uuid::Uuid,
     pub username: String,
+    pub display_name: String,
+    pub email: String,
     pub role: String,
+    pub auth_provider: String,
     pub mfa_enabled: bool,
+    pub is_active: bool,
+    pub force_password_reset: bool,
+    pub last_login_at: Option<String>,
 }
 
 async fn login(
     State(state): State<std::sync::Arc<AppState>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, fw_core::AppError> {
-    let user: Option<(uuid::Uuid, String, fw_core::models::UserRole, bool, bool, Option<String>, Option<chrono::DateTime<chrono::Utc>>, i32, Option<chrono::DateTime<chrono::Utc>>)> =
+    let user: Option<(uuid::Uuid, String, String, String, fw_core::models::UserRole, fw_core::models::AuthProvider, bool, bool, bool, Option<String>, Option<chrono::DateTime<chrono::Utc>>, i32, Option<chrono::DateTime<chrono::Utc>>)> =
         sqlx::query_as(
-            "SELECT id, username, role, mfa_enabled, is_active, password_hash, last_login_at, failed_login_attempts, locked_until FROM users WHERE username = $1 AND auth_provider = 'local'",
+            "SELECT id, username, display_name, email, role, auth_provider, mfa_enabled, is_active, force_password_reset, password_hash, last_login_at, failed_login_attempts, locked_until FROM users WHERE username = $1 AND auth_provider = 'local'",
         )
         .bind(&req.username)
         .fetch_optional(&state.db)
@@ -65,11 +71,15 @@ async fn login(
     let (
         user_id,
         username,
+        display_name,
+        email,
         role,
+        auth_provider,
         mfa_enabled,
         is_active,
+        force_password_reset,
         password_hash,
-        _last_login,
+        last_login_at,
         failed_attempts,
         locked_until,
     ) = user.unwrap_or_else(|| {
@@ -77,7 +87,11 @@ async fn login(
         (
             uuid::Uuid::nil(),
             String::new(),
+            String::new(),
+            String::new(),
             fw_core::models::UserRole::Operator,
+            fw_core::models::AuthProvider::Local,
+            false,
             false,
             false,
             Some("$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAA$dummy".to_string()),
@@ -187,8 +201,14 @@ async fn login(
         user: UserInfo {
             id: user_id,
             username,
+            display_name,
+            email,
             role: role.as_str().to_string(),
+            auth_provider: format!("{:?}", auth_provider).to_lowercase(),
             mfa_enabled,
+            is_active,
+            force_password_reset,
+            last_login_at: last_login_at.map(|dt| dt.to_rfc3339()),
         },
     }))
 }
@@ -242,8 +262,14 @@ async fn refresh_token(
         user: UserInfo {
             id: user_id,
             username,
+            display_name: String::new(),
+            email: String::new(),
             role: role.as_str().to_string(),
+            auth_provider: "local".to_string(),
             mfa_enabled: false,
+            is_active: true,
+            force_password_reset: false,
+            last_login_at: None,
         },
     }))
 }
@@ -288,8 +314,14 @@ async fn get_me(auth: AuthUser) -> Json<UserInfo> {
     Json(UserInfo {
         id: auth.user_id,
         username: auth.username,
+        display_name: String::new(),
+        email: String::new(),
         role: auth.role.as_str().to_string(),
+        auth_provider: "local".to_string(),
         mfa_enabled: false,
+        is_active: true,
+        force_password_reset: false,
+        last_login_at: None,
     })
 }
 
