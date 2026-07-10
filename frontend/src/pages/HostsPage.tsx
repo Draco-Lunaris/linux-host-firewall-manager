@@ -6,7 +6,7 @@ import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   TablePagination, TableSortLabel, TextField, Toolbar, Tooltip, Typography,
 } from '@mui/material'
-import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon, Pending as PendingIcon, GppMaybe as GppMaybeIcon, CheckCircleOutline as CheckCircleOutlineIcon, WarningAmber as WarningAmberIcon, VerifiedUser as VerifiedUserIcon, Security as SecurityIcon, SystemUpdate as SystemUpdateIcon, NewReleases as NewReleasesIcon } from '@mui/icons-material'
+import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon, Pending as PendingIcon, GppMaybe as GppMaybeIcon, CheckCircleOutline as CheckCircleOutlineIcon, WarningAmber as WarningAmberIcon, VerifiedUser as VerifiedUserIcon, Security as SecurityIcon } from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
 import { apiClient, hostsApi, enrollmentApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
@@ -213,13 +213,6 @@ export default function HostsPage() {
           <Table size="small">
             <TableHead>
               <TableRow>
-                {canWrite && <TableCell padding="checkbox">
-                  <Checkbox
-                    checked={filtered.length > 0 && selectedHostIds.size === filtered.length}
-                    indeterminate={selectedHostIds.size > 0 && selectedHostIds.size < filtered.length}
-                    onChange={handleToggleSelectAll}
-                  />
-                </TableCell>}
                 <TableCell>
                   <TableSortLabel active={sortKey === 'fqdn'} direction={sortKey === 'fqdn' ? sortDir : 'asc'} onClick={() => handleSortChange('fqdn')}>FQDN</TableSortLabel>
                 </TableCell>
@@ -286,12 +279,6 @@ export default function HostsPage() {
                 sortedHosts.map(h => (
                   <TableRow key={h.id} hover sx={{ cursor: 'pointer' }}
                     onClick={() => navigate(`/hosts/${h.id}`)}>
-                    {canWrite && <TableCell padding="checkbox" onClick={e => e.stopPropagation()}>
-                      <Checkbox
-                        checked={selectedHostIds.has(h.id)}
-                        onChange={() => handleToggleSelect(h.id)}
-                      />
-                    </TableCell>}
                     <TableCell>{h.fqdn}</TableCell>
                     <TableCell>{h.display_name}</TableCell>
                     <TableCell>{h.ip_address}</TableCell>
@@ -322,22 +309,9 @@ export default function HostsPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        {h.agent_version ?? '—'}
-                        {isNewerVersionAvailable(h) && (
-                          <Tooltip title="Upgrade available">
-                            <NewReleasesIcon color="secondary" fontSize="small" />
-                          </Tooltip>
-                        )}
-                      </Box>
+                      {h.agent_version ?? '—'}
                     </TableCell>
                     {canWrite && <TableCell onClick={e => e.stopPropagation()}>
-                      <Tooltip title="Upgrade agent">
-                        <IconButton size="small" color="secondary"
-                          onClick={(e) => { e.stopPropagation(); handleOpenUpgradeDialog([h.id]) }}>
-                          <SystemUpdateIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
                       <Tooltip title="Request refresh">
                         <IconButton size="small" color="primary"
                           disabled={refreshing === h.id}
