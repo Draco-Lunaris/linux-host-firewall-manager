@@ -13,6 +13,8 @@ trusted_proxies = []
 allowed_origins = []
 jwt_signing_key_path = "/etc/firewall-manager/jwt/signing.pem"
 jwt_verify_key_path = "/etc/firewall-manager/jwt/verify.pem"
+web_tls_cert_path = "/etc/firewall-manager/tls/cert.pem"
+web_tls_key_path = "/etc/firewall-manager/tls/key.pem"
 
 [worker]
 max_concurrent_agent_calls = 64

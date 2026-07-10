@@ -36,6 +36,18 @@ pub struct SecurityConfig {
     pub trusted_proxies: Vec<String>,
     #[serde(default)]
     pub allowed_origins: Vec<String>,
+    #[serde(default = "default_web_tls_cert_path")]
+    pub web_tls_cert_path: String,
+    #[serde(default = "default_web_tls_key_path")]
+    pub web_tls_key_path: String,
+}
+
+fn default_web_tls_cert_path() -> String {
+    "/etc/firewall-manager/tls/cert.pem".to_string()
+}
+
+fn default_web_tls_key_path() -> String {
+    "/etc/firewall-manager/tls/key.pem".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -42,6 +42,16 @@ case "$1" in
       chown firewall-manager:firewall-manager /etc/firewall-manager/jwt/signing.pem /etc/firewall-manager/jwt/verify.pem
     fi
 
+    # Generate self-signed TLS cert if not present
+    mkdir -p /etc/firewall-manager/tls
+    if [ ! -f /etc/firewall-manager/tls/cert.pem ]; then
+      openssl req -x509 -newkey rsa:2048 -keyout /etc/firewall-manager/tls/key.pem \
+        -out /etc/firewall-manager/tls/cert.pem -days 365 -nodes \
+        -subj '/CN=firewall-manager' 2>/dev/null
+      chown -R firewall-manager:firewall-manager /etc/firewall-manager/tls
+      chmod 600 /etc/firewall-manager/tls/key.pem
+    fi
+
     # Reload systemd
     systemctl daemon-reload
 

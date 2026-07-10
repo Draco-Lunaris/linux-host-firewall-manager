@@ -46,13 +46,43 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let router = fw_web::build_router(state);
-    let addr = format!("{}:{}", config.server.host, config.server.port);
-    tracing::info!("fw-web listening on {}", addr);
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(
-        listener,
-        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .await?;
+    let addr: std::net::SocketAddr = format!("{}:{}", config.server.host, config.server.port)
+        .parse()
+        .expect("Invalid bind address");
+
+    // Try to load TLS certificate and key; fall back to plain HTTP if missing.
+    let tls_cert = std::path::Path::new(&config.security.web_tls_cert_path);
+    let tls_key = std::path::Path::new(&config.security.web_tls_key_path);
+
+    if tls_cert.exists() && tls_key.exists() {
+        let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
+            &config.security.web_tls_cert_path,
+            &config.security.web_tls_key_path,
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to load TLS certificates");
+            e
+        })?;
+
+        tracing::info!(%addr, "fw-web listening (HTTPS)");
+        axum_server::bind_rustls(addr, tls_config)
+            .serve(router.into_make_service_with_connect_info::<std::net::SocketAddr>())
+            .await?;
+    } else {
+        tracing::warn!(
+            cert_path = %config.security.web_tls_cert_path,
+            key_path = %config.security.web_tls_key_path,
+            "TLS certificates not found — falling back to plain HTTP."
+        );
+        tracing::info!(%addr, "fw-web listening (HTTP — no TLS)");
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await?;
+    }
+
     Ok(())
 }
