@@ -688,11 +688,6 @@ export default function HostDetailPage() {
       .catch(() => setCertExists(false))
   }, [id])
 
-  // ── Trigger upgrade handler (stub — upgrade UI removed) ───────────────────
-  const handleTriggerUpgrade = async () => {
-    showSnack('Agent upgrade not available in this version', 'success')
-  }
-
   // ── Fetch windows ─────────────────────────────────────────────────────────
   const fetchWindows = useCallback(async () => {
     if (!id) return
