@@ -85,40 +85,72 @@ async fn get_host(
     _auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<HostDetailResponse>, fw_core::AppError> {
-    let host: Host = sqlx::query_as("SELECT * FROM hosts WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| fw_core::AppError::NotFound("Host not found".to_string()))?;
-
-    // Fetch container_runtime from the latest check-in's os_info
-    let container_runtime: Option<String> = sqlx::query_scalar(
-        "SELECT os_info->>'container_runtime' FROM agent_check_ins
-         WHERE host_id = $1 ORDER BY checked_in_at DESC LIMIT 1",
+    // Fetch host with ip_address cast to text, plus container_runtime from latest check-in
+    let row: Option<HostDetailRow> = sqlx::query_as(
+        "SELECT h.id, h.fqdn, h.ip_address::text, h.display_name, h.os_family, h.os_name, h.arch,
+                h.agent_version, h.health_status::text, h.last_health_at, h.last_sync_at,
+                h.agent_port, h.notes, h.registered_at, h.updated_at,
+                latest.os_info->>'container_runtime' AS container_runtime
+         FROM hosts h
+         LEFT JOIN LATERAL (
+             SELECT os_info FROM agent_check_ins
+             WHERE host_id = h.id ORDER BY checked_in_at DESC LIMIT 1
+         ) latest ON true
+         WHERE h.id = $1",
     )
     .bind(id)
     .fetch_optional(&state.db)
-    .await?
-    .flatten();
+    .await?;
+
+    let row = row.ok_or_else(|| fw_core::AppError::NotFound("Host not found".to_string()))?;
 
     Ok(Json(HostDetailResponse {
-        id: host.id,
-        fqdn: host.fqdn,
-        ip_address: host.ip_address,
-        display_name: host.display_name,
-        os_family: host.os_family,
-        os_name: host.os_name,
-        arch: host.arch,
-        agent_version: host.agent_version,
-        health_status: host.health_status,
-        last_health_at: host.last_health_at,
-        last_sync_at: host.last_sync_at,
-        agent_port: host.agent_port,
-        notes: host.notes,
-        registered_at: host.registered_at,
-        updated_at: host.updated_at,
-        container_runtime,
+        id: row.id,
+        fqdn: row.fqdn,
+        ip_address: row.ip_address,
+        display_name: row.display_name,
+        os_family: row.os_family,
+        os_name: row.os_name,
+        arch: row.arch,
+        agent_version: row.agent_version,
+        health_status: parse_health_status(&row.health_status),
+        last_health_at: row.last_health_at,
+        last_sync_at: row.last_sync_at,
+        agent_port: row.agent_port,
+        notes: row.notes,
+        registered_at: row.registered_at,
+        updated_at: row.updated_at,
+        container_runtime: row.container_runtime,
     }))
+}
+
+fn parse_health_status(s: &str) -> fw_core::models::HostHealthStatus {
+    match s {
+        "healthy" => fw_core::models::HostHealthStatus::Healthy,
+        "degraded" => fw_core::models::HostHealthStatus::Degraded,
+        "unreachable" => fw_core::models::HostHealthStatus::Unreachable,
+        _ => fw_core::models::HostHealthStatus::Pending,
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct HostDetailRow {
+    id: Uuid,
+    fqdn: String,
+    ip_address: String,
+    display_name: String,
+    os_family: Option<String>,
+    os_name: Option<String>,
+    arch: Option<String>,
+    agent_version: Option<String>,
+    health_status: String,
+    last_health_at: Option<chrono::DateTime<chrono::Utc>>,
+    last_sync_at: Option<chrono::DateTime<chrono::Utc>>,
+    agent_port: i32,
+    notes: String,
+    registered_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
+    container_runtime: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
