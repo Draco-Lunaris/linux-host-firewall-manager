@@ -180,12 +180,4 @@ pub fn build_router(state: AppState) -> Router<()> {
         .with_state(state)
 }
 
-/// Construct the package repository router (served on plain HTTP port 80).
-pub fn build_repo_router(_state: &AppState) -> Router {
-    let repo_dir = "/var/www/firewall-agent-repo";
-    Router::new()
-        .nest_service("/apt", ServeDir::new(format!("{repo_dir}/apt")))
-        .nest_service("/dnf", ServeDir::new(format!("{repo_dir}/dnf")))
-        .nest_service("/apk", ServeDir::new(format!("{repo_dir}/apk")))
-        .nest_service("/pacman", ServeDir::new(format!("{repo_dir}/pacman")))
-}
+

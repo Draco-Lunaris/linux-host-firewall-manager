@@ -407,44 +407,6 @@ export const enrollmentApi = {
     apiClient.delete(`/admin/enrollments/${id}/deny`).then(() => {}),
 }
 
-// ── Self-Upgrade API ────────────────────────────────────────────────────────
-export const upgradesApi = {
-  listAvailableVersions: () =>
-    apiClient.get<AvailableVersion[]>('/upgrades/available-versions'),
-
-  refreshVersions: () =>
-    apiClient.post<AvailableVersion[]>('/upgrades/refresh-versions'),
-
-  triggerUpgrade: (req: TriggerUpgradeRequest) =>
-    apiClient.post<TriggerUpgradeResponse>('/upgrades/trigger', req),
-}
-
-// ── Repo Management API (M12) ───────────────────────────────────────────────
-export const repoApi = {
-  triggerSync: () =>
-    apiClient.post('/admin/repo/sync'),
-
-  getSyncStatus: () =>
-    apiClient.get('/admin/repo/sync-status'),
-
-  listPackages: () =>
-    apiClient.get('/admin/repo/packages'),
-}
-
-// ── OS Package Mappings API ───────────────────────────────────────────────────
-export const osPackageMappingsApi = {
-  list: () =>
-    apiClient.get<OsPackageMapping[]>('/settings/os-package-mappings'),
-
-  create: (data: Omit<OsPackageMapping, 'id' | 'created_at' | 'updated_at' | 'is_default'>) =>
-    apiClient.post<OsPackageMapping>('/settings/os-package-mappings', data),
-
-  update: (id: string, data: Partial<OsPackageMapping>) =>
-    apiClient.put<OsPackageMapping>(`/settings/os-package-mappings/${id}`, data),
-
-  delete: (id: string) =>
-    apiClient.delete(`/settings/os-package-mappings/${id}`),
-}
 
 
 // ── Firewall Rules API ──────────────────────────────────────────────────────

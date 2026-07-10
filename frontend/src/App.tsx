@@ -18,7 +18,6 @@ import CertificatesPage from './pages/CertificatesPage'
 import ReportsPage from './pages/ReportsPage'
 import SettingsPage from './pages/SettingsPage'
 import ProfilePage from './pages/ProfilePage'
-import RepoManagementPage from './pages/RepoManagementPage'
 import RulesPage from './pages/RulesPage'
 import PolicySetsPage from './pages/PolicySetsPage'
 import DeploymentPage from './pages/DeploymentPage'
@@ -111,7 +110,6 @@ function App() {
             <Route path="/maintenance" element={<MaintenanceWindowsPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/certificates" element={<CertificatesPage />} />
-            <Route path="/repo" element={<RepoManagementPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/profile" element={<ProfilePage />} />
           </Route>
