@@ -93,11 +93,24 @@ mod tests {
     #[test]
     fn test_ed25519_roundtrip() {
         std::process::Command::new("openssl")
-            .args(["genpkey", "-algorithm", "ed25519", "-out", "/tmp/test_signing.pem"])
+            .args([
+                "genpkey",
+                "-algorithm",
+                "ed25519",
+                "-out",
+                "/tmp/test_signing.pem",
+            ])
             .output()
             .expect("openssl genpkey failed");
         std::process::Command::new("openssl")
-            .args(["pkey", "-in", "/tmp/test_signing.pem", "-pubout", "-out", "/tmp/test_verify.pem"])
+            .args([
+                "pkey",
+                "-in",
+                "/tmp/test_signing.pem",
+                "-pubout",
+                "-out",
+                "/tmp/test_verify.pem",
+            ])
             .output()
             .expect("openssl pkey failed");
 
@@ -119,17 +132,15 @@ mod tests {
             username: "admin".to_string(),
         };
 
-        let token = encode(&Header::new(Algorithm::EdDSA), &claims, &enc_key)
-            .expect("encode failed");
+        let token =
+            encode(&Header::new(Algorithm::EdDSA), &claims, &enc_key).expect("encode failed");
 
         let mut validation = Validation::new(Algorithm::EdDSA);
         validation.validate_exp = true;
         validation.leeway = 5;
-        let data = decode::<AccessClaims>(&token, &dec_key, &validation)
-            .expect("decode failed");
+        let data = decode::<AccessClaims>(&token, &dec_key, &validation).expect("decode failed");
 
         assert_eq!(data.claims.sub, "test-user");
         assert_eq!(data.claims.role, "admin");
     }
 }
-

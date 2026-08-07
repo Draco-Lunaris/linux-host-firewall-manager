@@ -21,17 +21,21 @@ pub async fn run(db: Arc<PgPool>) {
 
 async fn detect_stale_agents(db: &PgPool) -> Result<(), sqlx::Error> {
     // Get all hosts with their last check-in time and configured interval
-    let hosts: Vec<(uuid::Uuid, String, Option<chrono::DateTime<chrono::Utc>>, Option<i32>)> =
-        sqlx::query_as(
-            "SELECT h.id, h.fqdn, MAX(ac.checked_in_at) as last_check_in, hco.check_in_interval_secs
+    let hosts: Vec<(
+        uuid::Uuid,
+        String,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<i32>,
+    )> = sqlx::query_as(
+        "SELECT h.id, h.fqdn, MAX(ac.checked_in_at) as last_check_in, hco.check_in_interval_secs
              FROM hosts h
              LEFT JOIN agent_check_ins ac ON ac.host_id = h.id
              LEFT JOIN host_config_overrides hco ON hco.host_id = h.id
              WHERE h.health_status != 'unreachable' OR h.last_health_at IS NULL
              GROUP BY h.id, h.fqdn, hco.check_in_interval_secs",
-        )
-        .fetch_all(db)
-        .await?;
+    )
+    .fetch_all(db)
+    .await?;
 
     let now = chrono::Utc::now();
 

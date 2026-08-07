@@ -238,8 +238,7 @@ async fn approve_enrollment(
     // Build the manager check-in URL
     let manager_check_in_url = format!(
         "https://{}:{}/api/v1/agent/check-in",
-        state.config.server.host,
-        state.config.server.port
+        state.config.server.host, state.config.server.port
     );
 
     // Issue cert (stub — CA implementation will fill this in)

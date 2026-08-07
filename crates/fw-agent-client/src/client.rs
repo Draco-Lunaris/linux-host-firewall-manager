@@ -46,7 +46,10 @@ impl AgentClient {
 
     /// Push a generic pending action to the agent (emergency push).
     /// Used by the push dispatcher for high-priority actions that can't wait for check-in.
-    pub async fn push_action(&self, req: &PushActionRequest) -> Result<PushActionResponse, AgentClientError> {
+    pub async fn push_action(
+        &self,
+        req: &PushActionRequest,
+    ) -> Result<PushActionResponse, AgentClientError> {
         let resp = self
             .client
             .post(format!("{}/api/v1/actions/execute", self.base_url))

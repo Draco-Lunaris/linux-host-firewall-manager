@@ -7,7 +7,9 @@ mod tests {
     #[test]
     fn test_pki_bundle_with_pull_config_serialization() {
         let bundle = PkiBundle {
-            ca_chain: vec!["-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----".to_string()],
+            ca_chain: vec![
+                "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----".to_string(),
+            ],
             server_cert: "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----".to_string(),
             crl_pem: None,
             pull_config: Some(PullConfigBundle {

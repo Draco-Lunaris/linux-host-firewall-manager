@@ -179,5 +179,3 @@ pub fn build_router(state: AppState) -> Router<()> {
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
-
-
