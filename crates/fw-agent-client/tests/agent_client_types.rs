@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use fw_agent_client::client::{PushActionRequest, PushActionResponse};
-    use fw_agent_client::types::{AgentEnvelope, AgentError, DeployedRule, ApplyResult};
+    use fw_agent_client::types::{AgentEnvelope, AgentError, ApplyResult, DeployedRule};
     use uuid::Uuid;
 
     #[test]

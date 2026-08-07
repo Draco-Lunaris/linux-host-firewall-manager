@@ -98,14 +98,12 @@ async fn update_ip_whitelist(
         });
 
         if !covers_requester {
-            return Err(fw_core::AppError::BadRequest(
-                format!(
-                    "Lockout prevention: your IP ({}) is not in the new whitelist. \
+            return Err(fw_core::AppError::BadRequest(format!(
+                "Lockout prevention: your IP ({}) is not in the new whitelist. \
                      Add your IP or subnet to the list before saving, or clear the \
                      list to allow all IPs.",
-                    requester_ip
-                ),
-            ));
+                requester_ip
+            )));
         }
     }
 

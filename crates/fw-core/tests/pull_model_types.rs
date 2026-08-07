@@ -2,8 +2,8 @@
 
 #[cfg(test)]
 mod tests {
-    use fw_core::models::*;
     use chrono::Utc;
+    use fw_core::models::*;
     use uuid::Uuid;
 
     #[test]

@@ -64,11 +64,11 @@ async fn dispatch_action(db: &PgPool, action_id: uuid::Uuid) -> Result<(), sqlx:
         .fetch_optional(db)
         .await?;
 
-    let (host_id, action_type, payload, reason, attempts, max_attempts, push_enabled) =
-        match action {
-            Some(a) => a,
-            None => return Ok(()),
-        };
+    let (host_id, action_type, payload, reason, attempts, max_attempts, push_enabled) = match action
+    {
+        Some(a) => a,
+        None => return Ok(()),
+    };
 
     // Check if push is enabled for this host
     let push_enabled = push_enabled.unwrap_or(true);

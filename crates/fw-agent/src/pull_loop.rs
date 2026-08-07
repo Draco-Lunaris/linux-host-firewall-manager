@@ -10,9 +10,7 @@
 //! 7. Sleep for the configured interval, then repeat
 
 use anyhow::{Context, Result};
-use fw_core::models::{
-    FirewallAction, FirewallDirection, FirewallProtocol, FirewallRule,
-};
+use fw_core::models::{FirewallAction, FirewallDirection, FirewallProtocol, FirewallRule};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -40,9 +38,15 @@ pub async fn run_pull_loop(
     loop {
         tracing::info!(host_id = %host_id, interval = interval_secs, "Pull cycle starting");
 
-        if let Err(e) =
-            run_pull_cycle(&backend, &config, &pull_client, host_id, &mut interval_secs, &mut config_version)
-                .await
+        if let Err(e) = run_pull_cycle(
+            &backend,
+            &config,
+            &pull_client,
+            host_id,
+            &mut interval_secs,
+            &mut config_version,
+        )
+        .await
         {
             tracing::error!(error = %e, "Pull cycle failed");
         }
@@ -60,11 +64,17 @@ async fn run_pull_cycle(
     config_version: &mut i32,
 ) -> Result<()> {
     // 1. Compute current rules hash from backend snapshot
-    let snapshot = backend.snapshot().await.context("Failed to get backend snapshot")?;
+    let snapshot = backend
+        .snapshot()
+        .await
+        .context("Failed to get backend snapshot")?;
     let rules_hash = snapshot.hash;
 
     // 2. Gather agent info
-    let _backend_status = backend.status().await.context("Failed to get backend status")?;
+    let _backend_status = backend
+        .status()
+        .await
+        .context("Failed to get backend status")?;
     let os_info = gather_os_info();
     let uptime = get_uptime_seconds();
 
@@ -93,12 +103,19 @@ async fn run_pull_cycle(
             cfg.pull.push_enabled = cfg_update.push_enabled;
             cfg.safe_mode_enabled = cfg_update.safe_mode_enabled;
         }
-        tracing::info!(interval = *interval_secs, version = *config_version, "Config updated from manager");
+        tracing::info!(
+            interval = *interval_secs,
+            version = *config_version,
+            "Config updated from manager"
+        );
     }
 
     // 5. Apply new rules if changed
     if response.rules_changed && !response.rules.is_empty() {
-        tracing::info!(rule_count = response.rules.len(), "Rules changed, applying new ruleset");
+        tracing::info!(
+            rule_count = response.rules.len(),
+            "Rules changed, applying new ruleset"
+        );
         match apply_rules_from_dto(backend, &response.rules).await {
             Ok(new_hash) => {
                 let result_req = CheckInResultRequest {
@@ -255,7 +272,10 @@ async fn execute_pending_action(
             tracing::info!("apply_rules action — will be applied on next check-in");
             (true, None)
         }
-        _ => (false, Some(format!("Unknown action type: {}", action.action_type))),
+        _ => (
+            false,
+            Some(format!("Unknown action type: {}", action.action_type)),
+        ),
     }
 }
 

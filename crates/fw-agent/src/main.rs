@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
-use fw_agent::pull_client;
 use anyhow::Context;
+use fw_agent::pull_client;
 
 mod backend;
 mod compiler;
@@ -132,17 +132,13 @@ async fn run_daemon() -> anyhow::Result<()> {
     } else {
         cfg.pull.manager_check_in_url.clone()
     };
-    let pull_client = pull_client::PullClient::new(
-        &manager_url,
-        host_id,
-        &client_cert,
-        &client_key,
-        &ca_cert,
-    )?;
+    let pull_client =
+        pull_client::PullClient::new(&manager_url, host_id, &client_cert, &client_key, &ca_cert)?;
 
     // Detect the firewall backend
-    let backend = backend::detect()
-        .ok_or_else(|| anyhow::anyhow!("No firewall backend detected (ufw/firewalld/nftables required)"))?;
+    let backend = backend::detect().ok_or_else(|| {
+        anyhow::anyhow!("No firewall backend detected (ufw/firewalld/nftables required)")
+    })?;
     let backend: std::sync::Arc<dyn backend::FirewallBackend> = std::sync::Arc::from(backend);
 
     let config = std::sync::Arc::new(tokio::sync::RwLock::new(cfg.clone()));

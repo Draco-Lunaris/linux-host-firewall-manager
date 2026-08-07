@@ -133,13 +133,12 @@ async fn check_in(
         .map_err(fw_core::AppError::Database)?;
 
     // Get the host's assigned policy set
-    let policy_set_id: Option<Uuid> = sqlx::query_scalar(
-        "SELECT policy_set_id FROM host_policy_assignments WHERE host_id = $1",
-    )
-    .bind(req.host_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(fw_core::AppError::Database)?;
+    let policy_set_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT policy_set_id FROM host_policy_assignments WHERE host_id = $1")
+            .bind(req.host_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(fw_core::AppError::Database)?;
 
     // Compute expected rules hash from the assigned policy set
     let (rules, expected_hash) = if let Some(ps_id) = policy_set_id {
@@ -251,22 +250,30 @@ async fn check_in_result(
     if let Some(action_id) = req.action_id {
         // Update the pending action status
         if req.success {
-            sqlx::query("UPDATE pending_actions SET status = 'executed', executed_at = NOW() WHERE id = $1")
-                .bind(action_id)
-                .execute(&state.db)
-                .await
-                .map_err(fw_core::AppError::Database)?;
+            sqlx::query(
+                "UPDATE pending_actions SET status = 'executed', executed_at = NOW() WHERE id = $1",
+            )
+            .bind(action_id)
+            .execute(&state.db)
+            .await
+            .map_err(fw_core::AppError::Database)?;
         } else {
-            sqlx::query("UPDATE pending_actions SET status = 'failed', executed_at = NOW() WHERE id = $1")
-                .bind(action_id)
-                .execute(&state.db)
-                .await
-                .map_err(fw_core::AppError::Database)?;
+            sqlx::query(
+                "UPDATE pending_actions SET status = 'failed', executed_at = NOW() WHERE id = $1",
+            )
+            .bind(action_id)
+            .execute(&state.db)
+            .await
+            .map_err(fw_core::AppError::Database)?;
         }
 
         let _ = fw_core::audit::log_event(
             &state.db,
-            if req.success { "rule_deployed" } else { "firewall_job_failed" },
+            if req.success {
+                "rule_deployed"
+            } else {
+                "firewall_job_failed"
+            },
             None,
             None,
             Some("pending_action"),
@@ -299,13 +306,12 @@ async fn get_policy(
     State(state): State<std::sync::Arc<AppState>>,
     axum::extract::Query(params): axum::extract::Query<PolicyQuery>,
 ) -> Result<Json<Vec<RuleDto>>, fw_core::AppError> {
-    let policy_set_id: Option<Uuid> = sqlx::query_scalar(
-        "SELECT policy_set_id FROM host_policy_assignments WHERE host_id = $1",
-    )
-    .bind(params.host_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(fw_core::AppError::Database)?;
+    let policy_set_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT policy_set_id FROM host_policy_assignments WHERE host_id = $1")
+            .bind(params.host_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(fw_core::AppError::Database)?;
 
     let rules = if let Some(ps_id) = policy_set_id {
         fetch_rules_for_policy_set(&state.db, ps_id).await?

@@ -43,20 +43,29 @@ mod tests {
     #[test]
     fn test_valid_ipv4_cidr() {
         assert_eq!(validate_cidr_or_ip("10.0.0.0/8").unwrap(), "10.0.0.0/8");
-        assert_eq!(validate_cidr_or_ip("192.168.1.0/24").unwrap(), "192.168.1.0/24");
+        assert_eq!(
+            validate_cidr_or_ip("192.168.1.0/24").unwrap(),
+            "192.168.1.0/24"
+        );
         assert_eq!(validate_cidr_or_ip("0.0.0.0/0").unwrap(), "0.0.0.0/0");
     }
 
     #[test]
     fn test_valid_ipv6_cidr() {
         assert_eq!(validate_cidr_or_ip("::1/128").unwrap(), "::1/128");
-        assert_eq!(validate_cidr_or_ip("2001:db8::/32").unwrap(), "2001:db8::/32");
+        assert_eq!(
+            validate_cidr_or_ip("2001:db8::/32").unwrap(),
+            "2001:db8::/32"
+        );
     }
 
     #[test]
     fn test_bare_ipv4_normalized_to_32() {
         assert_eq!(validate_cidr_or_ip("10.0.0.1").unwrap(), "10.0.0.1/32");
-        assert_eq!(validate_cidr_or_ip("192.168.1.5").unwrap(), "192.168.1.5/32");
+        assert_eq!(
+            validate_cidr_or_ip("192.168.1.5").unwrap(),
+            "192.168.1.5/32"
+        );
     }
 
     #[test]
@@ -71,7 +80,10 @@ mod tests {
     #[test]
     fn test_whitespace_trimmed() {
         assert_eq!(validate_cidr_or_ip("  10.0.0.0/8  ").unwrap(), "10.0.0.0/8");
-        assert_eq!(validate_cidr_or_ip(" 192.168.1.1 ").unwrap(), "192.168.1.1/32");
+        assert_eq!(
+            validate_cidr_or_ip(" 192.168.1.1 ").unwrap(),
+            "192.168.1.1/32"
+        );
     }
 
     #[test]
@@ -99,20 +111,14 @@ mod tests {
 
     #[test]
     fn test_lockout_prevention_requester_covered() {
-        let whitelist = vec![
-            "10.0.0.0/8".to_string(),
-            "192.168.0.0/16".to_string(),
-        ];
+        let whitelist = vec!["10.0.0.0/8".to_string(), "192.168.0.0/16".to_string()];
         let requester = IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3));
         assert!(ip_is_covered(&whitelist, requester));
     }
 
     #[test]
     fn test_lockout_prevention_requester_not_covered() {
-        let whitelist = vec![
-            "10.0.0.0/8".to_string(),
-            "192.168.0.0/16".to_string(),
-        ];
+        let whitelist = vec!["10.0.0.0/8".to_string(), "192.168.0.0/16".to_string()];
         let requester = IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1));
         assert!(!ip_is_covered(&whitelist, requester));
     }
@@ -155,24 +161,24 @@ mod tests {
 
     #[test]
     fn test_lockout_prevention_mixed_ipv4_ipv6() {
-        let whitelist = vec![
-            "10.0.0.0/8".to_string(),
-            "::1/128".to_string(),
-        ];
+        let whitelist = vec!["10.0.0.0/8".to_string(), "::1/128".to_string()];
         // IPv4 requester covered by IPv4 entry
-        assert!(ip_is_covered(&whitelist, IpAddr::V4(Ipv4Addr::new(10, 1, 1, 1))));
+        assert!(ip_is_covered(
+            &whitelist,
+            IpAddr::V4(Ipv4Addr::new(10, 1, 1, 1))
+        ));
         // IPv6 requester covered by IPv6 entry
         assert!(ip_is_covered(&whitelist, IpAddr::V6(Ipv6Addr::LOCALHOST)));
         // IPv4 requester NOT covered by IPv6 entry
-        assert!(!ip_is_covered(&whitelist, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
+        assert!(!ip_is_covered(
+            &whitelist,
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))
+        ));
     }
 
     #[test]
     fn test_lockout_prevention_localhost_in_list() {
-        let whitelist = vec![
-            "127.0.0.1/32".to_string(),
-            "10.0.0.0/8".to_string(),
-        ];
+        let whitelist = vec!["127.0.0.1/32".to_string(), "10.0.0.0/8".to_string()];
         let requester = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         assert!(ip_is_covered(&whitelist, requester));
     }

@@ -1,32 +1,58 @@
 name: CI
 
+# Releases-only: CI fires on version tags (+ manual dispatch).
+# Local dev/test uses `just check` on the dev box; this workflow is the
+# release-time gate + the official .deb builder.
 on:
   push:
-    branches: [main, master]
-    tags: ['v*']
-  pull_request:
-    branches: [main, master]
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  rust-format:
+  # ── Quality Gates (release-time; local dev uses `just check`) ─────────────
+
+  fmt:
+    name: Rust Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - run: cargo fmt --check
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just fmt
 
   clippy:
+    name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just deps-deb
+      - run: just clippy
 
-  rust-test:
+  test:
+    name: Rust Tests
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -41,22 +67,31 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --workspace --all-features --lib --bins --tests
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just deps-deb
+      - run: just test
 
-  security-audit:
+  audit:
+    name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install cargo-audit
-      - run: cargo audit
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,just
+      - run: just audit
 
   gitleaks:
+    name: Secret scanning
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v3
@@ -64,58 +99,75 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   frontend-lint:
+    name: Frontend Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
         with:
-          node-version: 20
-      - run: cd frontend && npm ci
-      - run: cd frontend && npx eslint src/ --ext .ts,.tsx --max-warnings 0
-      - run: cd frontend && npx tsc --noEmit
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just frontend-lint
+
+  frontend-typecheck:
+    name: Frontend Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just frontend-typecheck
+
+  # ── Build & Release (tag push only) ────────────────────────────────────────
 
   build-and-release:
-    needs: [rust-format, clippy, rust-test, security-audit, gitleaks, frontend-lint]
+    name: Build & Release
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: [fmt, clippy, test, audit, gitleaks, frontend-lint, frontend-typecheck]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
         with:
-          node-version: 20
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config libssl-dev libfontconfig1-dev dpkg-dev
-      - name: Build frontend
-        run: cd frontend && npm ci && npm run build
-      - name: Build Rust release
-        run: cargo build --release
-      - name: Run tests
-        run: cargo test --workspace --all-features
-      - name: Strip binaries
-        run: |
-          strip target/release/fw-web target/release/fw-worker \
-            target/release/fw-agent target/release/migrate-secrets
-      - name: Build .deb package
-        run: |
-          chmod +x scripts/build-package.sh
-          scripts/build-package.sh
-      - name: Verify package
-        run: |
-          ls -la *.deb
-          dpkg-deb -I linux-firewall-manager_*.deb
+          tool: just
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - run: just deps-deb
+      - run: just pkg-deb
       - name: Generate release notes
+        id: release_notes
         run: |
-          echo "## Release ${GITHUB_REF#refs/tags/}" > release-notes.md
-          echo "" >> release-notes.md
-          git log --oneline $(git describe --tags --abbrev=0 HEAD^)..HEAD >> release-notes.md
-      - uses: softprops/action-gh-release@v2
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            NOTES=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          else
+            NOTES=$(git log --pretty=format:"- %s (%h)" --no-merges)
+          fi
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v3
         with:
-          body_path: release-notes.md
-          files: |
-            linux-firewall-manager_*.deb
+          body: ${{ steps.release_notes.outputs.notes }}
+          files: linux-firewall-manager_*.deb
