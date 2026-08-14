@@ -27,6 +27,8 @@ async fn main() -> anyhow::Result<()> {
         fw_auth::jwt::load_verify_key(&config.security.jwt_verify_key_path)?,
         &config.security.ip_whitelist,
         &config.security.trusted_proxies,
+        // SEC-011: wire the pool so require_auth rejects revoked jtis.
+        Some(std::sync::Arc::new(db.clone())),
     ));
 
     // Initialize CA (generates + persists the root CA on first run)

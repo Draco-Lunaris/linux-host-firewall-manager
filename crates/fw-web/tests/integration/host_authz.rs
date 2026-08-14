@@ -53,6 +53,7 @@ mod tests {
             "test_key".to_string(),
             &["10.0.0.0/8".to_string()],
             &[],
+            None,
         );
 
         let allowed = config.is_ip_allowed(&IpAddr::from_str("10.1.2.3").unwrap());
@@ -64,7 +65,7 @@ mod tests {
 
     #[test]
     fn test_ip_whitelist_empty_allows_all() {
-        let config = AuthConfig::new("test_key".to_string(), &[], &[]);
+        let config = AuthConfig::new("test_key".to_string(), &[], &[], None);
 
         let allowed = config.is_ip_allowed(&IpAddr::from_str("192.168.1.1").unwrap());
         assert!(allowed);
@@ -76,6 +77,7 @@ mod tests {
             "test_key".to_string(),
             &[],
             &["10.0.0.0/8".to_string()],
+            None,
         );
 
         // When the peer is a trusted proxy, XFF should be used

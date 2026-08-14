@@ -84,6 +84,10 @@ pub struct AuthConfig {
     pub verify_key_pem: String,
     pub ip_whitelist: Arc<tokio::sync::RwLock<Vec<IpNet>>>,
     pub trusted_proxies: Arc<tokio::sync::RwLock<Vec<IpNet>>>,
+    /// Optional DB pool for JWT jti revocation (SEC-011). `None` (used by unit
+    /// tests) skips the revocation check; production passes `Some` so revoked
+    /// refresh-token jtis are rejected fail-closed.
+    pub db: Option<Arc<sqlx::PgPool>>,
 }
 
 impl AuthConfig {
@@ -91,6 +95,7 @@ impl AuthConfig {
         verify_key_pem: String,
         ip_whitelist_cidrs: &[String],
         trusted_proxy_cidrs: &[String],
+        db: Option<Arc<sqlx::PgPool>>,
     ) -> Self {
         let ip_whitelist = ip_whitelist_cidrs
             .iter()
@@ -104,6 +109,7 @@ impl AuthConfig {
             verify_key_pem,
             ip_whitelist: Arc::new(tokio::sync::RwLock::new(ip_whitelist)),
             trusted_proxies: Arc::new(tokio::sync::RwLock::new(trusted_proxies)),
+            db,
         }
     }
 
@@ -219,6 +225,18 @@ pub async fn require_auth(auth_config: Arc<AuthConfig>, mut req: Request, next: 
             return unauthorized("Invalid token");
         }
     };
+
+    // SEC-011: reject revoked JWTs by jti. Skipped when no DB pool is wired
+    // (unit tests); production passes one via AuthConfig::new. is_jti_revoked
+    // is fail-closed — a jti with no matching refresh_tokens row counts as
+    // revoked — so a present-but-revoked token is rejected here, before any
+    // role/host authorization runs.
+    if let Some(db) = auth_config.db.as_ref() {
+        if is_jti_revoked(db, &claims.jti).await {
+            tracing::debug!(jti = %claims.jti, "revoked jti presented");
+            return unauthorized("Token revoked");
+        }
+    }
 
     let role = match UserRole::parse_role(&claims.role) {
         Some(r) => r,
