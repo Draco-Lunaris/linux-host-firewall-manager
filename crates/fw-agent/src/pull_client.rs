@@ -14,10 +14,14 @@ use std::time::Duration;
 use uuid::Uuid;
 
 /// HTTP client for calling the manager's agent API.
+#[derive(Clone)]
 pub struct PullClient {
     manager_url: String,
     host_id: Uuid,
     client: Client,
+    /// A client with no request timeout for the long-lived SSE events stream
+    /// (the regular `client` has a 30s timeout that would cut the stream short).
+    stream_client: Client,
 }
 
 #[derive(Debug, Serialize)]
@@ -126,10 +130,28 @@ impl PullClient {
             .build()
             .context("Failed to build HTTP client")?;
 
+        // Separate client for the long-lived SSE events stream: no request
+        // timeout (the stream is held up to check_in_interval - 30s).
+        let stream_identity = reqwest::Identity::from_pem(
+            format!("{}\n{}", client_cert_pem, client_key_pem).as_bytes(),
+        )
+        .context("Failed to create mTLS identity")?;
+        let stream_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())
+            .context("Failed to parse CA certificate")?;
+        let stream_client = Client::builder()
+            .use_rustls_tls()
+            .tls_built_in_root_certs(false)
+            .min_tls_version(reqwest::tls::Version::TLS_1_3)
+            .identity(stream_identity)
+            .add_root_certificate(stream_ca)
+            .build()
+            .context("Failed to build streaming HTTP client")?;
+
         Ok(Self {
             manager_url: manager_url.trim_end_matches('/').to_string(),
             host_id,
             client,
+            stream_client,
         })
     }
 
@@ -197,5 +219,97 @@ impl PullClient {
         resp.json::<Vec<RuleDto>>()
             .await
             .context("Failed to parse policy response")
+    }
+
+    /// Open the manager's SSE events stream and drive `notify` on each
+    /// `check-in` event, and once when the stream ends (hold-window timeout or
+    /// connection drop) so the caller runs a normal cycle. Returns when the
+    /// stream closes or errors. Uses `stream_client` (no timeout) and reads
+    /// incrementally via `chunk()` so no reqwest `stream` feature is required.
+    pub async fn run_events_stream(
+        &self,
+        notify: std::sync::Arc<tokio::sync::Notify>,
+    ) -> Result<()> {
+        let url = format!("{}/api/v1/agent/events", self.manager_url);
+        let resp = self
+            .stream_client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to open SSE events stream")?;
+        let mut resp = resp
+            .error_for_status()
+            .context("SSE events stream rejected")?;
+
+        let mut buf = String::new();
+        loop {
+            match resp.chunk().await.context("Failed to read SSE chunk")? {
+                Some(chunk) => {
+                    buf.push_str(&String::from_utf8_lossy(&chunk));
+                    // SSE frames are separated by a blank line (\n\n). Process
+                    // every complete frame currently buffered.
+                    while let Some(idx) = buf.find("\n\n") {
+                        let frame = buf[..idx].to_string();
+                        buf.drain(..idx + 2);
+                        if let Some(event) = parse_sse_event(&frame) {
+                            if event == "check-in" {
+                                notify.notify_one();
+                            }
+                            // other events (e.g. `timeout`, keepalive comments)
+                            // are not force signals — the stream end below
+                            // handles the hold-window timeout.
+                        }
+                    }
+                }
+                None => {
+                    // Stream ended (server closed at the hold window, or the
+                    // connection dropped). Run a normal cycle either way.
+                    notify.notify_one();
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Parse the `event:` field out of a single SSE frame. Returns `None` for
+/// comment-only frames (keepalive lines starting with `:`).
+fn parse_sse_event(frame: &str) -> Option<String> {
+    let mut event: Option<String> = None;
+    for line in frame.lines() {
+        if line.starts_with(':') {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("event:") {
+            event = Some(rest.trim().to_string());
+        }
+    }
+    event
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_sse_event;
+
+    #[test]
+    fn parses_check_in_event() {
+        assert_eq!(
+            parse_sse_event("event:check-in\ndata:now").as_deref(),
+            Some("check-in")
+        );
+    }
+
+    #[test]
+    fn parses_timeout_event() {
+        assert_eq!(
+            parse_sse_event("event:timeout\ndata:hold-expired").as_deref(),
+            Some("timeout")
+        );
+    }
+
+    #[test]
+    fn ignores_keepalive_comments() {
+        assert_eq!(parse_sse_event(": keepalive 1234"), None);
     }
 }

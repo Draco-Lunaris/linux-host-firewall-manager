@@ -51,8 +51,31 @@ pub async fn run_pull_loop(
             tracing::error!(error = %e, "Pull cycle failed");
         }
 
-        tokio::time::sleep(Duration::from_secs(interval_secs.max(60) as u64)).await;
+        wait_for_next_cycle(&pull_client, interval_secs).await;
     }
+}
+
+/// Wait for the next pull cycle. Prefers the manager's SSE events stream
+/// (Stream 5): an operator "force check-in" emits a `check-in` event that
+/// wakes us immediately, and the stream's hold-window timeout (or any drop)
+/// also wakes us so the next cycle runs on schedule. If the SSE stream is
+/// unavailable, the `sleep(interval)` branch bounds the wait. The manager
+/// never opens a connection to the agent — the agent holds this subscription.
+async fn wait_for_next_cycle(pull_client: &PullClient, interval_secs: u32) {
+    let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+    let sse_notify = notify.clone();
+    let pc = pull_client.clone();
+    let sse_task = tokio::spawn(async move {
+        if let Err(e) = pc.run_events_stream(sse_notify).await {
+            tracing::warn!(error = %e, "SSE events stream ended; will sleep instead");
+        }
+    });
+
+    tokio::select! {
+        _ = notify.notified() => {}
+        _ = tokio::time::sleep(Duration::from_secs(interval_secs.max(60) as u64)) => {}
+    }
+    sse_task.abort();
 }
 
 async fn run_pull_cycle(
