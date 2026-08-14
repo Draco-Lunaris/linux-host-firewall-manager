@@ -237,10 +237,12 @@ async fn approve_enrollment(
     .execute(&state.db)
     .await;
 
-    // Build the manager check-in URL
+    // Build the manager check-in URL. The agent API lives on the dedicated mTLS
+    // agent_port (8443), not the human-UI port (443) — handing out the human-UI
+    // port would send the agent to a listener that never mounts the agent API.
     let manager_check_in_url = format!(
         "https://{}:{}/api/v1/agent/check-in",
-        state.config.server.host, state.config.server.port
+        state.config.server.host, state.config.server.agent_port
     );
 
     // Sign the agent's CSR with the manager CA, binding the cert identity to host_id.

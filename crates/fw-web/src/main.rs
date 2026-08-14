@@ -69,8 +69,13 @@ async fn main() -> anyhow::Result<()> {
             .expect("Invalid agent bind address");
         let agent_listener =
             fw_web::agent_listener::AgentTlsListener::new(agent_addr, agent_server_config).await?;
-        let agent_router =
-            fw_web::routes::agent_api::router().with_state(std::sync::Arc::new(state.clone()));
+        // Nest under /api/v1/agent so the routes match the agent client's URL
+        // construction ({manager_url}/api/v1/agent/check-in) and the URL handed to
+        // the agent at enrollment. The dedicated mTLS listener still owns these
+        // routes; the prefix is path-only and does not affect ConnectInfo/HostIdentity.
+        let agent_router = axum::Router::new()
+            .nest("/api/v1/agent", fw_web::routes::agent_api::router())
+            .with_state(std::sync::Arc::new(state.clone()));
         tracing::info!(%agent_addr, "agent mTLS API listening (mandatory client cert)");
         tokio::spawn(async move {
             if let Err(e) = axum::serve(
