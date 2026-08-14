@@ -234,6 +234,9 @@ export default function HostsPage() {
                 <TableCell>
                   <TableSortLabel active={sortKey === 'agent_version'} direction={sortKey === 'agent_version' ? sortDir : 'asc'} onClick={() => handleSortChange('agent_version')}>Agent</TableSortLabel>
                 </TableCell>
+                <TableCell>Backend</TableCell>
+                <TableCell>Policy Set</TableCell>
+                <TableCell>Last Check-in</TableCell>
                 {canWrite && <TableCell>Actions</TableCell>}
               </TableRow>
             </TableHead>
@@ -253,6 +256,9 @@ export default function HostsPage() {
                     <TableCell><Chip size="small" label="pending" color="warning" /></TableCell>
                     <TableCell></TableCell>
                     <TableCell></TableCell>
+                    <TableCell>—</TableCell>
+                    <TableCell>—</TableCell>
+                    <TableCell>—</TableCell>
                     <TableCell>—</TableCell>
                     {canWrite && <TableCell onClick={e => e.stopPropagation()}>
                       <Tooltip title="Approve">
@@ -304,6 +310,9 @@ export default function HostsPage() {
                     <TableCell>
                       {h.agent_version ?? '—'}
                     </TableCell>
+                    <TableCell>{h.backend_type || '—'}</TableCell>
+                    <TableCell>{h.policy_set_name ?? '—'}</TableCell>
+                    <TableCell>{h.last_check_in ? new Date(h.last_check_in).toLocaleString() : '—'}</TableCell>
                     {canWrite && <TableCell onClick={e => e.stopPropagation()}>
                       <Tooltip title="Request refresh">
                         <IconButton size="small" color="primary"

@@ -69,12 +69,22 @@ async fn list_hosts(
         "SELECT h.id, h.fqdn, h.ip_address::text, h.display_name, h.os_family, h.os_name, h.arch,
                 h.agent_version, h.health_status::text, h.last_health_at, h.last_sync_at,
                 h.agent_port, h.notes, h.registered_at, h.updated_at,
-                latest.os_info->>'container_runtime' AS container_runtime
+                latest.os_info->>'container_runtime' AS container_runtime,
+                latest.backend_type AS backend_type,
+                latest.checked_in_at AS last_check_in,
+                ps.policy_set_name AS policy_set_name
          FROM hosts h
          LEFT JOIN LATERAL (
-             SELECT os_info FROM agent_check_ins
+             SELECT os_info, backend_type, checked_in_at FROM agent_check_ins
              WHERE host_id = h.id ORDER BY checked_in_at DESC LIMIT 1
          ) latest ON true
+         LEFT JOIN LATERAL (
+             SELECT ps.name AS policy_set_name
+             FROM host_policy_assignments hpa
+             JOIN firewall_policy_sets ps ON ps.id = hpa.policy_set_id
+             WHERE hpa.host_id = h.id
+             LIMIT 1
+         ) ps ON true
          ORDER BY h.fqdn",
     )
     .fetch_all(&state.db)
@@ -108,6 +118,12 @@ pub struct HostRow {
     pub registered_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub container_runtime: Option<String>,
+    /// Firewall backend reported on the host's latest check-in (e.g. ufw/firewalld).
+    pub backend_type: Option<String>,
+    /// Timestamp of the host's most recent check-in (pull-model liveness).
+    pub last_check_in: Option<chrono::DateTime<chrono::Utc>>,
+    /// Name of the policy set currently assigned to the host, if any.
+    pub policy_set_name: Option<String>,
 }
 
 async fn get_host(

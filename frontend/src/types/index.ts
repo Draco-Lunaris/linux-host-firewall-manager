@@ -31,6 +31,12 @@ export interface Host {
   updated_at?: string
   health_check_status?: 'all_healthy' | 'some_unhealthy' | 'none'
   container_runtime?: string | null
+  /** Firewall backend reported on the latest check-in (ufw/firewalld). */
+  backend_type?: string | null
+  /** Timestamp of the most recent check-in. */
+  last_check_in?: string | null
+  /** Name of the assigned policy set, if any. */
+  policy_set_name?: string | null
 }
 
 export interface CreateHostRequest {
