@@ -29,11 +29,10 @@ async fn main() -> anyhow::Result<()> {
         &config.security.trusted_proxies,
     ));
 
-    // Initialize CA
-    let ca = std::sync::Arc::new(fw_ca::CertAuthority::init(
-        "/etc/firewall-manager/ca".to_string(),
-        &db,
-    ));
+    // Initialize CA (generates + persists the root CA on first run)
+    let ca = std::sync::Arc::new(
+        fw_ca::CertAuthority::init("/etc/firewall-manager/ca".to_string(), &db).await?,
+    );
 
     let state = fw_web::AppState {
         db,

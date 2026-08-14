@@ -354,6 +354,9 @@ pub struct EnrollmentRequest {
     pub hostname: Option<String>,
     pub os_details: Json<serde_json::Value>,
     pub polling_token: String,
+    /// The agent's CSR (PEM), captured at submission so the manager can sign it
+    /// on approval. NULL for legacy rows.
+    pub csr: Option<String>,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
 }

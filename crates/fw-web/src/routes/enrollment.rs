@@ -99,9 +99,9 @@ async fn submit_enrollment(
         .map_err(|e| fw_core::AppError::Internal(e.to_string()))?;
 
     sqlx::query(
-        "INSERT INTO enrollment_requests (machine_id, fqdn, ip_address, hostname, os_details, polling_token)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (machine_id) DO UPDATE SET polling_token = $6, created_at = NOW()",
+        "INSERT INTO enrollment_requests (machine_id, fqdn, ip_address, hostname, os_details, polling_token, csr)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (machine_id) DO UPDATE SET polling_token = $6, csr = $7, created_at = NOW()",
     )
     .bind(&machine_id)
     .bind(&req.fqdn)
@@ -109,6 +109,7 @@ async fn submit_enrollment(
     .bind(&req.hostname)
     .bind(&req.os_details)
     .bind(&polling_hash)
+    .bind(&req.csr)
     .execute(&state.db)
     .await?;
 
@@ -191,14 +192,15 @@ async fn approve_enrollment(
     }
 
     // Fetch enrollment request
-    let req: Option<(String, String, Option<String>, serde_json::Value, String)> = sqlx::query_as(
-        "SELECT fqdn, ip_address, hostname, os_details, polling_token FROM enrollment_requests WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await?;
+    let req: Option<(String, String, Option<String>, serde_json::Value, String, Option<String>)> =
+        sqlx::query_as(
+            "SELECT fqdn, ip_address, hostname, os_details, polling_token, csr FROM enrollment_requests WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?;
 
-    let (fqdn, ip, hostname, os_details, polling_token) =
+    let (fqdn, ip, hostname, os_details, polling_token, csr) =
         req.ok_or_else(|| fw_core::AppError::NotFound("Enrollment request not found".to_string()))?;
 
     // Check FQDN/IP collision
@@ -241,12 +243,25 @@ async fn approve_enrollment(
         state.config.server.host, state.config.server.port
     );
 
-    // Issue cert (stub — CA implementation will fill this in)
-    // For now, create a placeholder PKI bundle with pull config
+    // Sign the agent's CSR with the manager CA, binding the cert identity to host_id.
+    // The manager rewrites the subject CN to the assigned host_id (not the agent's FQDN),
+    // so the cert — not the request body — is the host identity.
+    let csr = csr.ok_or_else(|| {
+        fw_core::AppError::BadRequest("Enrollment request has no CSR".to_string())
+    })?;
+    let signed = state
+        .ca
+        .sign_csr(&csr, host_id)
+        .map_err(|e| fw_core::AppError::Internal(format!("CA sign failed: {e}")))?;
+
+    // NOTE: the issued host cert is delivered to the agent via the PkiBundle. Persisting
+    // host certs in the `certificates` table (for list/revoke/CRL) is deferred to the CRL
+    // follow-up — the ca_tier CHECK currently only allows root/intermediate, and CRL
+    // revocation needs the real x509 serial, neither of which is wired yet.
     let pki_bundle = fw_core::models::PkiBundle {
-        ca_chain: vec!["PLACEHOLDER_CA".to_string()],
-        server_cert: "PLACEHOLDER_CERT".to_string(),
-        crl_pem: None,
+        ca_chain: signed.ca_chain,
+        server_cert: signed.cert_pem,
+        crl_pem: signed.crl_pem,
         pull_config: Some(fw_core::models::PullConfigBundle {
             check_in_interval_secs: 900,
             push_enabled: true,
