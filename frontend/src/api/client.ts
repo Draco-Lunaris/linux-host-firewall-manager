@@ -457,6 +457,17 @@ export interface AssignResponse {
   host_ids: string[]
 }
 
+export interface UnassignResponse {
+  policy_set_id: string
+  unassigned_from: number
+}
+
+export interface DeploymentPreviewResponse {
+  ufw_command: string[]
+  firewalld_command: string[]
+  rule_count: number
+}
+
 export const deploymentApi = {
   /** POST /deployment/assign — assign a policy set to hosts (optionally groups). */
   assign: (policySetId: string, hostIds: string[], groupIds?: string[]) =>
@@ -464,6 +475,18 @@ export const deploymentApi = {
       policy_set_id: policySetId,
       host_ids: hostIds,
       group_ids: groupIds ?? [],
+    }),
+  /** POST /deployment/unassign — remove a policy set from hosts/groups. */
+  unassign: (policySetId: string, hostIds: string[], groupIds?: string[]) =>
+    apiClient.post<UnassignResponse>("/deployment/unassign", {
+      policy_set_id: policySetId,
+      host_ids: hostIds,
+      group_ids: groupIds ?? [],
+    }),
+  /** POST /deployment/preview — compiled ufw/firewalld commands + rule count. */
+  preview: (policySetId: string) =>
+    apiClient.post<DeploymentPreviewResponse>("/deployment/preview", {
+      policy_set_id: policySetId,
     }),
 }
 
