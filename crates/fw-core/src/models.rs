@@ -72,26 +72,6 @@ impl UserRole {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "job_status", rename_all = "lowercase")]
-pub enum JobStatus {
-    Queued,
-    Pending,
-    Running,
-    Succeeded,
-    Failed,
-    Cancelled,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "job_kind", rename_all = "lowercase")]
-pub enum JobKind {
-    RuleApply,
-    RuleRemove,
-    Reboot,
-    Rollback,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "host_health_status", rename_all = "lowercase")]
 pub enum HostHealthStatus {
     Pending,
@@ -115,15 +95,6 @@ pub enum AuthProvider {
     AzureSso,
     Keycloak,
     Oidc,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "window_recurrence", rename_all = "lowercase")]
-pub enum WindowRecurrence {
-    Once,
-    Daily,
-    Weekly,
-    Monthly,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
@@ -176,6 +147,7 @@ pub enum AuditAction {
     CaIntermediateIssued,
     CaIntermediateRevoked,
     AuditAnchorMismatch,
+    PolicyForceCheckin,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
@@ -323,38 +295,6 @@ pub struct Group {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct FirewallJob {
-    pub id: Uuid,
-    pub kind: JobKind,
-    pub status: JobStatus,
-    pub created_by_user_id: Option<Uuid>,
-    pub parent_job_id: Option<Uuid>,
-    pub maintenance_window_id: Option<Uuid>,
-    pub immediate: bool,
-    pub policy_set_id: Option<Uuid>,
-    pub notes: String,
-    pub created_at: DateTime<Utc>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub scheduled_for: Option<DateTime<Utc>>,
-    pub auto_apply: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct FirewallJobHost {
-    pub id: Uuid,
-    pub job_id: Uuid,
-    pub host_id: Uuid,
-    pub status: JobStatus,
-    pub agent_job_id: Option<String>,
-    pub retry_count: i32,
-    pub output: String,
-    pub error_message: Option<String>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Certificate {
     pub id: Uuid,
     pub host_id: Option<Uuid>,
@@ -367,23 +307,6 @@ pub struct Certificate {
     pub cert_pem: String,
     pub ca_tier: String,
     pub parent_cert_id: Option<Uuid>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct MaintenanceWindow {
-    pub id: Uuid,
-    pub host_id: Uuid,
-    pub label: String,
-    pub recurrence: WindowRecurrence,
-    pub start_at: DateTime<Utc>,
-    pub duration_minutes: i32,
-    pub recurrence_day: Option<i32>,
-    pub enabled: bool,
-    pub auto_apply: bool,
-    pub notify_before_minutes: Option<i32>,
-    pub last_triggered_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
 }
 
 // ============================================================
@@ -447,13 +370,6 @@ pub struct AuditAnchor {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct HostApplyLock {
-    pub host_id: Uuid,
-    pub locked_by_job: Option<Uuid>,
-    pub locked_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct OperatorHostGroup {
     pub user_id: Uuid,
     pub group_id: Uuid,
@@ -497,6 +413,11 @@ pub struct AgentCheckIn {
     pub config_version: i32,
     pub pending_results: serde_json::Value,
     pub checked_in_at: chrono::DateTime<chrono::Utc>,
+    // Apply-result fields (written by POST /check-in/result; NULL until a result arrives)
+    pub apply_success: Option<bool>,
+    pub apply_error: Option<String>,
+    pub applied_rule_count: Option<i32>,
+    pub applied_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -507,6 +428,7 @@ pub struct HostConfigOverride {
     pub safe_mode_enabled: bool,
     pub backend_override: Option<String>,
     pub config_version: i32,
+    pub last_known_good_hash: Option<String>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 

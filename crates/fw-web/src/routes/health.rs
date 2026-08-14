@@ -49,17 +49,11 @@ pub async fn fleet_status_handler(State(state): State<Arc<AppState>>) -> Json<se
         .await
         .unwrap_or(0);
 
-    let total_jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM firewall_jobs")
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or(0);
-
-    let pending_jobs: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM firewall_jobs WHERE status IN ('queued', 'pending', 'running')",
-    )
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(0);
+    // No job queue in the pull model; apply status is per-host on agent_check_ins.
+    // These fields are retained as zeros for response-shape compatibility until the
+    // dashboard is reworked to firewall pull-model metrics.
+    let total_jobs: i64 = 0;
+    let pending_jobs: i64 = 0;
 
     Json(serde_json::json!({
         "total_hosts": total_hosts,
