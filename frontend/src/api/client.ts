@@ -3,7 +3,6 @@ import { useAuthStore } from '../store/authStore'
 import type {
   FleetStatus,
   CreateHostRequest,
-  CreateJobRequest,
   CreateMaintenanceWindowRequest,
   MaintenanceWindow,
   UpdateMaintenanceWindowRequest,
@@ -159,22 +158,6 @@ export const hostsApi = {
   refresh: (id: string) => apiClient.post(`/hosts/${id}/refresh`),
 }
 
-// ── Jobs API ─────────────────────────────────────────────────────────────────
-export const jobsApi = {
-  list: (params?: Record<string, unknown>) => apiClient.get('/jobs', { params }),
-  get: (id: string) => apiClient.get(`/jobs/${id}`),
-  create: (body: CreateJobRequest) => apiClient.post('/jobs', body),
-  cancel: (id: string) => apiClient.post(`/jobs/${id}/cancel`),
-  rollback: (id: string) => apiClient.post(`/jobs/${id}/rollback`),
-}
-
-// ── Patches API (per-host patch listing) ──────────────────────────────────────
-export const patchesApi = {
-  // Returns patches available on a specific host via the manager's proxy
-  // The backend reads from host_patch_data table (cached from agent poll)
-  getHostPatches: (hostId: string) => apiClient.get(`/hosts/${hostId}/patches`),
-}
-
 // ── Maintenance Windows API ───────────────────────────────────────────────────
 export const maintenanceWindowsApi = {
   /** Bulk: fetch ALL maintenance windows across every host in one request. */
@@ -189,13 +172,6 @@ export const maintenanceWindowsApi = {
     apiClient.put(`/hosts/${hostId}/maintenance-windows/${windowId}`, body),
   remove: (hostId: string, windowId: string) =>
     apiClient.delete(`/hosts/${hostId}/maintenance-windows/${windowId}`),
-}
-
-// ── WebSocket API (M7) ────────────────────────────────────────────────────────
-export const wsApi = {
-  /** POST /api/v1/ws/ticket — obtain a single-use WS auth ticket (60 s expiry). */
-  createTicket: (): Promise<{ ticket: string }> =>
-    apiClient.post<{ ticket: string }>('/ws/ticket').then((r) => r.data),
 }
 
 // ── Certificates API (M8) ────────────────────────────────────────────────────
@@ -229,26 +205,6 @@ export const certsApi = {
     apiClient.post<IssuedCert>(`/hosts/${hostId}/certificates/reissue`),
 }
 
-// ── Reports API (M9) ─────────────────────────────────────────────────────────
-export type ReportType = 'compliance' | 'patch-history' | 'vulnerability' | 'audit'
-export type ReportFormat = 'csv' | 'pdf'
-
-export const reportsApi = {
-  download: (
-    reportType: ReportType,
-    format: ReportFormat,
-    params?: {
-      from?: string        // ISO 8601
-      to?: string          // ISO 8601
-      group_id?: string    // UUID
-    }
-  ) =>
-    apiClient.get(`/reports/${reportType}`, {
-      params: { format, ...params },
-      responseType: 'blob',
-      timeout: 120_000,   // reports can take a while
-    }),
-}
 // ── Settings API (M10) ────────────────────────────────────────────────────
 
 /** @deprecated Use OidcConfigResponse instead */
@@ -400,7 +356,7 @@ export const enrollmentApi = {
     apiClient.post(`/admin/enrollments/${id}/approve`).then(() => {}),
 
   deny: (id: string): Promise<void> =>
-    apiClient.delete(`/admin/enrollments/${id}/deny`).then(() => {}),
+    apiClient.post(`/admin/enrollments/${id}/deny`).then(() => {}),
 }
 
 

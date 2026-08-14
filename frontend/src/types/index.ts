@@ -3,8 +3,6 @@
 export type UserRole = 'admin' | 'operator' | 'reporter'
 export type AuthProvider = 'local' | 'azure_sso' | 'keycloak' | 'oidc'
 export type HostHealthStatus = 'pending' | 'healthy' | 'degraded' | 'unreachable'
-export type JobStatus = 'queued' | 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
-export type JobKind = 'rule_apply' | 'rule_remove' | 'reboot' | 'rollback'
 
 export interface ApiError {
   error: {
@@ -111,68 +109,6 @@ export interface FleetStatus {
   crl_not_reporting: number
 }
 
-export interface PatchInfo {
-  name: string
-  current_version: string
-  available_version: string
-  severity: 'critical' | 'high' | 'medium' | 'low'
-  description: string
-  cve_ids: string[]
-  requires_reboot: boolean
-}
-
-export interface PatchJobHost {
-  id: string
-  job_id: string
-  host_id: string
-  host_display_name: string
-  status: JobStatus
-  agent_job_id?: string
-  retry_count: number
-  output: string
-  error_message?: string
-  retry_next_at?: string
-  started_at?: string
-  completed_at?: string
-}
-
-export interface PatchJob {
-  id: string
-  kind: JobKind
-  status: JobStatus
-  immediate: boolean
-  patch_selection: string[]
-  notes: string
-  created_at: string
-  started_at?: string
-  completed_at?: string
-  hosts: PatchJobHost[]
-}
-
-export interface PatchJobSummary {
-  id: string
-  kind: JobKind
-  status: JobStatus
-  immediate: boolean
-  host_count: number
-  host_names: string[]
-  succeeded_count: number
-  failed_count: number
-  notes: string
-  created_at: string
-  started_at?: string
-  completed_at?: string
-}
-
-export interface CreateJobRequest {
-  host_ids: string[]
-  packages: string[]   // empty = all patches
-  immediate: boolean
-  maintenance_window_id?: string
-  allow_reboot?: boolean
-  notes?: string
-}
-
 // ── Maintenance Windows ───────────────────────────────────────────────────────
 
 export type WindowRecurrence = 'once' | 'daily' | 'weekly' | 'monthly'
@@ -214,22 +150,6 @@ export interface UpdateMaintenanceWindowRequest {
   auto_apply?: boolean
 }
 
-// ── WebSocket event types (M7) ────────────────────────────────────────────────
-
-export interface JobWsEvent {
-  event_type?: 'host' | 'job'  // defaults to 'host' for backward compat
-  job_id: string
-  host_id: string
-  status: JobStatus
-  output?: string
-  error_message?: string
-  agent_job_id?: string
-  // Job-level fields (only present when event_type === 'job')
-  succeeded_count?: number
-  failed_count?: number
-  host_count?: number
-}
-
 // ── Certificates (M8) ────────────────────────────────────────────────────────
 
 export type CertStatus = 'active' | 'revoked' | 'expired'
@@ -256,9 +176,6 @@ export interface IssuedCert {
   server_serial_number: string
   ca_root_pem: string
 }
-
-// ── Reports (M9) ─────────────────────────────────────────────────────────────
-export type ReportType = 'compliance' | 'patch-history' | 'vulnerability' | 'audit'
 
 // ── Settings (M10) ──────────────────────────────────────────────────────────
 
@@ -320,18 +237,6 @@ export interface SettingsResponse {
   web_tls_strategy: string
   notification: NotificationConfig
 }
-
-export interface AuditIntegrityResult {
-  intact: boolean
-  rows_checked: number
-  errors: Array<{
-    row_id: number
-    expected_hash: string
-    actual_hash: string
-  }>
-}
-
-export type ReportFormat = 'csv' | 'pdf'
 
 // ── Health Checks ────────────────────────────────────────────────────────────
 

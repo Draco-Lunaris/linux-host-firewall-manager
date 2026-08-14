@@ -12,10 +12,7 @@ import HostDetailPage from './pages/HostDetailPage'
 import GroupsPage from './pages/GroupsPage'
 import UsersPage from './pages/UsersPage'
 import DashboardPage from './pages/DashboardPage'
-import JobsPage from './pages/JobsPage'
-import MaintenanceWindowsPage from './pages/MaintenanceWindowsPage'
 import CertificatesPage from './pages/CertificatesPage'
-import ReportsPage from './pages/ReportsPage'
 import SettingsPage from './pages/SettingsPage'
 import ProfilePage from './pages/ProfilePage'
 import RulesPage from './pages/RulesPage'
@@ -103,12 +100,9 @@ function App() {
             <Route path="/hosts/:id" element={<HostDetailPage />} />
             <Route path="/groups" element={<GroupsPage />} />
             <Route path="/users" element={<UsersPage />} />
-            <Route path="/jobs" element={<JobsPage />} />
             <Route path="/rules" element={<RulesPage />} />
             <Route path="/policy-sets" element={<PolicySetsPage />} />
             <Route path="/deployment" element={<DeploymentPage />} />
-            <Route path="/maintenance" element={<MaintenanceWindowsPage />} />
-            <Route path="/reports" element={<ReportsPage />} />
             <Route path="/certificates" element={<CertificatesPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/profile" element={<ProfilePage />} />
