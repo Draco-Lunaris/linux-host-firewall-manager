@@ -149,11 +149,6 @@ pub fn build_router(state: AppState) -> Router<()> {
         .nest("/rules", routes::rules::router())
         .nest("/policy-sets", routes::policy_sets::router())
         .nest("/deployment", routes::deployment::router())
-        .nest("/jobs", routes::jobs::router())
-        .nest(
-            "/maintenance-windows",
-            routes::maintenance_windows::router(),
-        )
         .nest("/ca", routes::ca::router())
         .nest("/certificates", routes::certificates::router())
         .nest("/settings", routes::settings::router())

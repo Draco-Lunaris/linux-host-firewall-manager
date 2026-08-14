@@ -7,8 +7,6 @@ pub mod enrollment;
 pub mod groups;
 pub mod health;
 pub mod hosts;
-pub mod jobs;
-pub mod maintenance_windows;
 pub mod policy_sets;
 pub mod rules;
 pub mod settings;
