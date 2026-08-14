@@ -248,8 +248,7 @@ export interface SmtpConfig {
 }
 
 export interface PollingConfig {
-  health_poll_interval_secs: number
-  patch_poll_interval_secs: number
+  check_in_interval_secs: number
 }
 
 export interface NotificationConfig {

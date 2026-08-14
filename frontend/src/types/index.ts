@@ -182,8 +182,8 @@ export interface SmtpConfig {
 }
 
 export interface PollingConfig {
-  health_poll_interval_secs: number
-  patch_poll_interval_secs: number
+  /** Default agent check-in interval (pull model), in seconds. */
+  check_in_interval_secs: number
 }
 
 export interface NotificationConfig {

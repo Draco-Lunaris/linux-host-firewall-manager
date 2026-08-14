@@ -37,7 +37,7 @@ async fn get_settings(
     Ok(Json(serde_json::json!({
         "oidc": { "enabled": false, "issuer": "", "client_id": "", "client_secret": "", "redirect_uri": "" },
         "smtp": { "enabled": false, "host": "", "port": 587, "username": "", "password": "", "from": "", "tls_mode": "starttls" },
-        "polling": { "health_interval": 300, "drift_interval": 900 },
+        "polling": { "check_in_interval_secs": 900 },
         "ip_whitelist": ip_list,
         "web_tls_strategy": "internal_ca",
         "notification": { "email_enabled": false, "webhook_enabled": false, "webhook_url": "" }
