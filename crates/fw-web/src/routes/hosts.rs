@@ -30,6 +30,7 @@ pub fn router() -> Router<std::sync::Arc<AppState>> {
         )
         .route("/{id}/drift-snapshots", get(get_drift_snapshots))
         .route("/{id}/force-check-in", post(force_check_in))
+        .route("/{id}/check-ins", get(get_check_ins))
 }
 
 /// Force a host to check in immediately (pull model). Signals the per-host
@@ -400,4 +401,36 @@ async fn get_drift_snapshots(
     .fetch_all(&state.db)
     .await?;
     Ok(Json(snapshots))
+}
+
+/// `GET /{id}/check-ins` — recent agent check-in records with apply results,
+/// for the host detail page's check-in/apply history. Pull model: each row is
+/// one agent check-in; `apply_*` columns record the outcome of the last apply.
+async fn get_check_ins(
+    State(state): State<std::sync::Arc<AppState>>,
+    _auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<CheckInRow>>, fw_core::AppError> {
+    let rows: Vec<CheckInRow> = sqlx::query_as(
+        "SELECT id, checked_in_at, rules_hash, agent_version, backend_type,
+                apply_success, apply_error, applied_rule_count, applied_at
+         FROM agent_check_ins WHERE host_id = $1 ORDER BY checked_in_at DESC LIMIT 25",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(rows))
+}
+
+#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+pub struct CheckInRow {
+    pub id: Uuid,
+    pub checked_in_at: chrono::DateTime<chrono::Utc>,
+    pub rules_hash: String,
+    pub agent_version: String,
+    pub backend_type: String,
+    pub apply_success: Option<bool>,
+    pub apply_error: Option<String>,
+    pub applied_rule_count: Option<i32>,
+    pub applied_at: Option<chrono::DateTime<chrono::Utc>>,
 }
