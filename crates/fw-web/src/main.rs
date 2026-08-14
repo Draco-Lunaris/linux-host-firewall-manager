@@ -50,6 +50,7 @@ async fn main() -> anyhow::Result<()> {
         ws_tickets: std::sync::Arc::new(dashmap::DashMap::new()),
         ca: ca.clone(),
         approved_enrollments: std::sync::Arc::new(dashmap::DashMap::new()),
+        host_notify: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     // ── Agent mTLS listener (SEC-008) ────────────────────────────────────

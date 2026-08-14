@@ -3,7 +3,7 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, get},
+    routing::{delete, get, post},
     Json, Router,
 };
 use fw_auth::rbac::AuthUser;
@@ -29,6 +29,35 @@ pub fn router() -> Router<std::sync::Arc<AppState>> {
             get(get_protected_cidrs).post(add_protected_cidr),
         )
         .route("/{id}/drift-snapshots", get(get_drift_snapshots))
+        .route("/{id}/force-check-in", post(force_check_in))
+}
+
+/// Force a host to check in immediately (pull model). Signals the per-host
+/// `Notify` in `AppState::host_notify`; the agent's SSE subscription
+/// (`GET /api/v1/agent/events`, Stream 5) wakes and runs a cycle. If no SSE is
+/// currently held, the permit is stored and the next subscription returns at
+/// once. The manager never opens a connection to the agent. Returns 202.
+async fn force_check_in(
+    State(state): State<std::sync::Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    _auth: AuthUser,
+) -> Result<StatusCode, fw_core::AppError> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM hosts WHERE id = $1)")
+        .bind(id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(fw_core::AppError::Database)?;
+    if !exists {
+        return Err(fw_core::AppError::NotFound("Host not found".to_string()));
+    }
+    let notify = state
+        .host_notify
+        .entry(id)
+        .or_insert_with(|| std::sync::Arc::new(tokio::sync::Notify::new()))
+        .clone();
+    notify.notify_one();
+    tracing::info!(host_id = %id, "force-check-in signalled");
+    Ok(StatusCode::ACCEPTED)
 }
 
 async fn list_hosts(

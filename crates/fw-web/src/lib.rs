@@ -87,6 +87,13 @@ pub struct AppState {
     pub ws_tickets: Arc<DashMap<String, WsTicket>>,
     pub ca: Arc<fw_ca::CertAuthority>,
     pub approved_enrollments: Arc<DashMap<String, ApprovedEntry>>,
+    /// Per-host force-check-in notifiers (SEC-008 pull model). An operator
+    /// `POST /hosts/{id}/force-check-in` calls `notify_one()` here; the agent's
+    /// long-lived SSE subscription to `GET /api/v1/agent/events` (Stream 5)
+    /// awaits the same `Notify` and runs a check-in cycle immediately. The
+    /// manager never opens a connection to the agent — the permit is stored if
+    /// no SSE is held, so the next subscription returns at once.
+    pub host_notify: Arc<DashMap<uuid::Uuid, Arc<tokio::sync::Notify>>>,
 }
 #[derive(Debug, Clone)]
 pub struct WsTicket {
