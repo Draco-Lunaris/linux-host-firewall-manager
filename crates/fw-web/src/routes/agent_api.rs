@@ -12,11 +12,15 @@
 use axum::{
     extract::State,
     http::StatusCode,
+    response::sse::{Event, KeepAlive, KeepAliveStream, Sse},
     routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
 use crate::mtls::HostIdentity;
@@ -30,11 +34,77 @@ pub fn router() -> Router<std::sync::Arc<AppState>> {
         // DB-free identity echo — used to verify mTLS host binding without a
         // database, and handy for agent debugging.
         .route("/whoami", get(whoami))
+        // Long-lived SSE subscription the agent holds between check-in cycles.
+        // A `POST /hosts/{id}/force-check-in` from an operator signals the
+        // per-host Notify; this endpoint wakes and emits a `check-in` event so
+        // the agent runs a cycle immediately. Held up to the host's check-in
+        // interval minus 30s, then the stream ends and the agent falls back to
+        // its normal sleep. The manager never opens a connection to the agent.
+        .route("/events", get(events))
 }
 
 /// Echo the host_id bound by the mTLS client certificate. No DB access.
 async fn whoami(host: HostIdentity) -> Json<serde_json::Value> {
     Json(serde_json::json!({ "host_id": host.0 }))
+}
+
+/// `GET /events` — SSE stream of pull-model signals for this host.
+///
+/// The agent opens this after each check-in cycle and holds it up to the host's
+/// `check_in_interval - 30s`. An operator `POST /hosts/{id}/force-check-in`
+/// calls `notify_one()` on the per-host `Notify`; this handler wakes and emits
+/// a `check-in` event so the agent runs a cycle immediately. When the hold
+/// window expires the stream ends with a `timeout` event and the agent falls
+/// back to its normal sleep — purely additive, never breaks the base pull loop.
+async fn events(
+    State(state): State<std::sync::Arc<AppState>>,
+    host: HostIdentity,
+) -> Sse<KeepAliveStream<ReceiverStream<Result<Event, std::convert::Infallible>>>> {
+    let host_id = host.0;
+
+    // Hold for the host's configured interval minus 30s so the agent still
+    // sleeps normally when no signal arrives. Default 900s.
+    let interval_secs: i32 = sqlx::query_scalar(
+        "SELECT check_in_interval_secs FROM host_config_overrides WHERE host_id = $1",
+    )
+    .bind(host_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(900);
+    let hold_secs = (interval_secs - 30).max(30) as u64;
+
+    let notify = state
+        .host_notify
+        .entry(host_id)
+        .or_insert_with(|| std::sync::Arc::new(tokio::sync::Notify::new()))
+        .clone();
+
+    let (tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(8);
+    tokio::spawn(async move {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(hold_secs);
+        loop {
+            let notified = notify.notified();
+            tokio::pin!(notified);
+            tokio::select! {
+                _ = &mut notified => {
+                    if tx.send(Ok(Event::default().event("check-in").data("now")))
+                        .await.is_err() {
+                        break; // client disconnected
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    let _ = tx
+                        .send(Ok(Event::default().event("timeout").data("hold-expired")))
+                        .await;
+                    break;
+                }
+            }
+        }
+    });
+
+    Sse::new(ReceiverStream::new(rx)).keep_alive(KeepAlive::default())
 }
 
 // ── Request/Response types ──────────────────────────────────────────────────
