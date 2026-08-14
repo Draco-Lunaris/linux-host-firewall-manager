@@ -99,14 +99,12 @@ export interface FleetStatus {
   degraded: number
   unreachable: number
   pending: number
-  total_pending_patches: number
-  hosts_requiring_reboot: number
-  compliance_pct: number
-  crl_valid: number
-  crl_expired: number
-  crl_missing: number
-  crl_invalid: number
-  crl_not_reporting: number
+  total_rules: number
+  policy_sets: number
+  /** Distinct hosts that reported a rules-hash mismatch on check-in in the last 24h. */
+  hosts_in_drift: number
+  /** Check-ins received in the last 15 minutes (pull-model liveness). */
+  recent_check_ins: number
 }
 
 // ── Maintenance Windows ───────────────────────────────────────────────────────

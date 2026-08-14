@@ -49,11 +49,30 @@ pub async fn fleet_status_handler(State(state): State<Arc<AppState>>) -> Json<se
         .await
         .unwrap_or(0);
 
-    // No job queue in the pull model; apply status is per-host on agent_check_ins.
-    // These fields are retained as zeros for response-shape compatibility until the
-    // dashboard is reworked to firewall pull-model metrics.
-    let total_jobs: i64 = 0;
-    let pending_jobs: i64 = 0;
+    let policy_sets: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM firewall_policy_sets")
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+
+    // Hosts that reported a rules-hash mismatch on check-in in the last day —
+    // i.e. their live firewall rules drifted from the assigned policy set.
+    let hosts_in_drift: i64 = sqlx::query_scalar(
+        "SELECT COUNT(DISTINCT host_id) FROM drift_snapshots \
+         WHERE source = 'check_in_mismatch' AND captured_at > NOW() - INTERVAL '24 hours'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+
+    // Pull-model liveness: check-ins received in the last 15 minutes (default
+    // check-in interval). Zero means no agent has checked in recently.
+    let recent_check_ins: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_check_ins \
+         WHERE checked_in_at > NOW() - INTERVAL '15 minutes'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
 
     Json(serde_json::json!({
         "total_hosts": total_hosts,
@@ -62,10 +81,8 @@ pub async fn fleet_status_handler(State(state): State<Arc<AppState>>) -> Json<se
         "unreachable": unreachable,
         "pending": pending,
         "total_rules": total_rules,
-        "total_jobs": total_jobs,
-        "pending_jobs": pending_jobs,
-        "compliance_pct": if total_hosts > 0 { 100.0 } else { 0.0 },
-        "total_pending_patches": 0,
-        "hosts_requiring_reboot": 0,
+        "policy_sets": policy_sets,
+        "hosts_in_drift": hosts_in_drift,
+        "recent_check_ins": recent_check_ins,
     }))
 }
