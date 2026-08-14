@@ -319,7 +319,7 @@ async fn preview_compilation(
     }))
 }
 
-fn compile_ufw_command(rule: &FirewallRule) -> String {
+pub(crate) fn compile_ufw_command(rule: &FirewallRule) -> String {
     let mut cmd = "ufw".to_string();
     match rule.action {
         FirewallAction::Allow => cmd.push_str(" allow"),
@@ -360,7 +360,7 @@ fn compile_ufw_command(rule: &FirewallRule) -> String {
     cmd
 }
 
-fn compile_firewalld_command(rule: &FirewallRule) -> String {
+pub(crate) fn compile_firewalld_command(rule: &FirewallRule) -> String {
     let action = match rule.action {
         FirewallAction::Allow => "accept",
         FirewallAction::Deny => "drop",
