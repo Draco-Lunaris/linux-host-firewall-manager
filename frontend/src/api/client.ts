@@ -448,16 +448,23 @@ export const policySetsApi = {
   preview: (id: string) => apiClient.post<PreviewCompilationResponse>(`/policy-sets/${id}/preview`),
 }
 
-// ── Deployment API ──────────────────────────────────────────────────────────
-export interface DeployResponse {
-  job_id: string
-  host_count: number
-  status: string
+// ── Deployment API (assignment-only — pull model) ────────────────────────────
+// There is no job or push: assigning a policy set here is the only apply path.
+// The agent pulls its assigned policy on the next check-in and applies it.
+export interface AssignResponse {
+  policy_set_id: string
+  assigned_count: number
+  host_ids: string[]
 }
 
 export const deploymentApi = {
-  deploy: (policySetId: string, hostIds: string[], immediate?: boolean) =>
-    apiClient.post<DeployResponse>("/deployment", { policy_set_id: policySetId, host_ids: hostIds, immediate }),
+  /** POST /deployment/assign — assign a policy set to hosts (optionally groups). */
+  assign: (policySetId: string, hostIds: string[], groupIds?: string[]) =>
+    apiClient.post<AssignResponse>("/deployment/assign", {
+      policy_set_id: policySetId,
+      host_ids: hostIds,
+      group_ids: groupIds ?? [],
+    }),
 }
 
 // ── Host Policy Assignments API ─────────────────────────────────────────────

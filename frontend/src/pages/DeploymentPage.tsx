@@ -54,10 +54,10 @@ export default function DeploymentPage() {
     setError(null)
     setResult(null)
     try {
-      const resp = await deploymentApi.deploy(selectedPolicySet, Array.from(selectedHosts), true)
-      setResult(`Job ${resp.data.job_id} created for ${resp.data.host_count} hosts. Status: ${resp.data.status}`)
+      const resp = await deploymentApi.assign(selectedPolicySet, Array.from(selectedHosts))
+      setResult(`Policy set assigned to ${resp.data.assigned_count} host(s). They will pull and apply it on their next check-in.`)
     } catch (e: unknown) {
-      setError((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Deploy failed")
+      setError((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Assignment failed")
     }
     setDeploying(false)
   }
