@@ -3,9 +3,6 @@ import { useAuthStore } from '../store/authStore'
 import type {
   FleetStatus,
   CreateHostRequest,
-  CreateMaintenanceWindowRequest,
-  MaintenanceWindow,
-  UpdateMaintenanceWindowRequest,
   Certificate,
   IssuedCert,
   HealthCheckWithResult,
@@ -156,22 +153,26 @@ export const hostsApi = {
     apiClient.put(`/hosts/${id}`, body),
   delete: (id: string) => apiClient.delete(`/hosts/${id}`),
   refresh: (id: string) => apiClient.post(`/hosts/${id}/refresh`),
+  /** POST /hosts/{id}/force-check-in — signal the agent's SSE subscription to check in now. */
+  forceCheckIn: (id: string) => apiClient.post(`/hosts/${id}/force-check-in`),
 }
 
-// ── Maintenance Windows API ───────────────────────────────────────────────────
-export const maintenanceWindowsApi = {
-  /** Bulk: fetch ALL maintenance windows across every host in one request. */
-  listAll: () =>
-    apiClient.get<{ windows: MaintenanceWindow[] }>('/maintenance-windows'),
-  /** Per-host: fetch windows for a single host. */
-  list: (hostId: string) =>
-    apiClient.get(`/hosts/${hostId}/maintenance-windows`),
-  create: (hostId: string, body: CreateMaintenanceWindowRequest) =>
-    apiClient.post(`/hosts/${hostId}/maintenance-windows`, body),
-  update: (hostId: string, windowId: string, body: UpdateMaintenanceWindowRequest) =>
-    apiClient.put(`/hosts/${hostId}/maintenance-windows/${windowId}`, body),
-  remove: (hostId: string, windowId: string) =>
-    apiClient.delete(`/hosts/${hostId}/maintenance-windows/${windowId}`),
+// ── Check-in history API (pull model) ────────────────────────────────────────
+export interface CheckIn {
+  id: string
+  checked_in_at: string
+  rules_hash: string
+  agent_version: string
+  backend_type: string
+  apply_success: boolean | null
+  apply_error: string | null
+  applied_rule_count: number | null
+  applied_at: string | null
+}
+
+export const checkInsApi = {
+  /** GET /hosts/{id}/check-ins — recent agent check-ins with apply results. */
+  list: (hostId: string) => apiClient.get<CheckIn[]>(`/hosts/${hostId}/check-ins`),
 }
 
 // ── Certificates API (M8) ────────────────────────────────────────────────────

@@ -107,47 +107,6 @@ export interface FleetStatus {
   recent_check_ins: number
 }
 
-// ── Maintenance Windows ───────────────────────────────────────────────────────
-
-export type WindowRecurrence = 'once' | 'daily' | 'weekly' | 'monthly'
-
-export interface MaintenanceWindow {
-  id: string
-  host_id: string
-  label: string
-  recurrence: WindowRecurrence
-  /** Absolute start (once) or time-of-day reference (recurring) — ISO 8601 UTC */
-  start_at: string
-  /** Duration in minutes */
-  duration_minutes: number
-  /** 0-6 for weekly (0=Sun), 1-31 for monthly, null for once/daily */
-  recurrence_day?: number | null
-  enabled: boolean
-  auto_apply: boolean
-  created_at: string
-  updated_at: string
-}
-
-export interface CreateMaintenanceWindowRequest {
-  label: string
-  recurrence: WindowRecurrence
-  start_at: string
-  duration_minutes?: number
-  recurrence_day?: number | null
-  enabled?: boolean
-  auto_apply?: boolean
-}
-
-export interface UpdateMaintenanceWindowRequest {
-  label?: string
-  recurrence?: WindowRecurrence
-  start_at?: string
-  duration_minutes?: number
-  recurrence_day?: number | null
-  enabled?: boolean
-  auto_apply?: boolean
-}
-
 // ── Certificates (M8) ────────────────────────────────────────────────────────
 
 export type CertStatus = 'active' | 'revoked' | 'expired'
