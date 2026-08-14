@@ -18,12 +18,20 @@ pub struct DatabaseConfig {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    /// Port for the agent-facing mTLS API (mandatory client cert). The human UI
+    /// stays on `port` (443) with server-side TLS only.
+    #[serde(default = "default_agent_port")]
+    pub agent_port: u16,
     #[serde(default = "default_static_dir")]
     pub static_dir: String,
 }
 
 fn default_static_dir() -> String {
     "/usr/share/firewall-manager/frontend".to_string()
+}
+
+fn default_agent_port() -> u16 {
+    8443
 }
 
 #[derive(Debug, Clone, Deserialize)]

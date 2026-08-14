@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::mtls::HostIdentity;
 use crate::AppState;
 
 pub fn router() -> Router<std::sync::Arc<AppState>> {
@@ -26,13 +27,20 @@ pub fn router() -> Router<std::sync::Arc<AppState>> {
         .route("/check-in", post(check_in))
         .route("/check-in/result", post(check_in_result))
         .route("/policy", get(get_policy))
+        // DB-free identity echo — used to verify mTLS host binding without a
+        // database, and handy for agent debugging.
+        .route("/whoami", get(whoami))
+}
+
+/// Echo the host_id bound by the mTLS client certificate. No DB access.
+async fn whoami(host: HostIdentity) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "host_id": host.0 }))
 }
 
 // ── Request/Response types ──────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct CheckInRequest {
-    pub host_id: Uuid,
     pub rules_hash: String,
     pub agent_version: String,
     pub backend_type: String,
@@ -95,7 +103,6 @@ pub struct AgentUpdateInfo {
 
 #[derive(Debug, Deserialize)]
 pub struct CheckInResultRequest {
-    pub host_id: Uuid,
     pub action_id: Option<Uuid>,
     pub success: bool,
     pub error_message: Option<String>,
@@ -106,14 +113,16 @@ pub struct CheckInResultRequest {
 
 async fn check_in(
     State(state): State<std::sync::Arc<AppState>>,
+    host: HostIdentity,
     Json(req): Json<CheckInRequest>,
 ) -> Result<Json<CheckInResponse>, fw_core::AppError> {
+    let host_id = host.0;
     // Record the check-in
     sqlx::query(
         "INSERT INTO agent_check_ins (host_id, rules_hash, agent_version, backend_type, os_info, uptime_seconds, config_version)
          VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
-    .bind(req.host_id)
+    .bind(host_id)
     .bind(&req.rules_hash)
     .bind(&req.agent_version)
     .bind(&req.backend_type)
@@ -126,7 +135,7 @@ async fn check_in(
 
     // Update host health to healthy (check-in = alive)
     sqlx::query("UPDATE hosts SET health_status = 'healthy', last_health_at = NOW(), agent_version = $2 WHERE id = $1")
-        .bind(req.host_id)
+        .bind(host_id)
         .bind(&req.agent_version)
         .execute(&state.db)
         .await
@@ -135,7 +144,7 @@ async fn check_in(
     // Get the host's assigned policy set
     let policy_set_id: Option<Uuid> =
         sqlx::query_scalar("SELECT policy_set_id FROM host_policy_assignments WHERE host_id = $1")
-            .bind(req.host_id)
+            .bind(host_id)
             .fetch_optional(&state.db)
             .await
             .map_err(fw_core::AppError::Database)?;
@@ -158,7 +167,7 @@ async fn check_in(
             "INSERT INTO drift_snapshots (host_id, snapshot_hash, rule_count, source)
              VALUES ($1, $2, $3, 'check_in_mismatch')",
         )
-        .bind(req.host_id)
+        .bind(host_id)
         .bind(&req.rules_hash)
         .bind(rules.len() as i32)
         .execute(&state.db)
@@ -170,7 +179,7 @@ async fn check_in(
             None,
             None,
             Some("host"),
-            Some(&req.host_id.to_string()),
+            Some(&host_id.to_string()),
             serde_json::json!({
                 "agent_hash": req.rules_hash,
                 "expected_hash": expected_hash,
@@ -186,7 +195,7 @@ async fn check_in(
         "SELECT host_id, check_in_interval_secs, push_enabled, safe_mode_enabled, backend_override, config_version, updated_at
          FROM host_config_overrides WHERE host_id = $1",
     )
-    .bind(req.host_id)
+    .bind(host_id)
     .fetch_optional(&state.db)
     .await
     .map_err(fw_core::AppError::Database)?
@@ -208,7 +217,7 @@ async fn check_in(
          WHERE host_id = $1 AND status = 'queued' AND expires_at > NOW()
          ORDER BY priority DESC, created_at",
     )
-    .bind(req.host_id)
+    .bind(host_id)
     .fetch_all(&state.db)
     .await
     .map_err(fw_core::AppError::Database)?
@@ -245,8 +254,10 @@ async fn check_in(
 
 async fn check_in_result(
     State(state): State<std::sync::Arc<AppState>>,
+    host: HostIdentity,
     Json(req): Json<CheckInResultRequest>,
 ) -> Result<StatusCode, fw_core::AppError> {
+    let host_id = host.0;
     if let Some(action_id) = req.action_id {
         // Update the pending action status
         if req.success {
@@ -279,7 +290,7 @@ async fn check_in_result(
             Some("pending_action"),
             Some(&action_id.to_string()),
             serde_json::json!({
-                "host_id": req.host_id,
+                "host_id": host_id,
                 "success": req.success,
                 "error": req.error_message,
             }),
@@ -294,7 +305,7 @@ async fn check_in_result(
         "INSERT INTO drift_snapshots (host_id, snapshot_hash, rule_count, source)
          VALUES ($1, $2, 0, 'agent_report')",
     )
-    .bind(req.host_id)
+    .bind(host_id)
     .bind(&req.new_rules_hash)
     .execute(&state.db)
     .await;
@@ -304,11 +315,12 @@ async fn check_in_result(
 
 async fn get_policy(
     State(state): State<std::sync::Arc<AppState>>,
-    axum::extract::Query(params): axum::extract::Query<PolicyQuery>,
+    host: HostIdentity,
 ) -> Result<Json<Vec<RuleDto>>, fw_core::AppError> {
+    let host_id = host.0;
     let policy_set_id: Option<Uuid> =
         sqlx::query_scalar("SELECT policy_set_id FROM host_policy_assignments WHERE host_id = $1")
-            .bind(params.host_id)
+            .bind(host_id)
             .fetch_optional(&state.db)
             .await
             .map_err(fw_core::AppError::Database)?;
@@ -323,11 +335,6 @@ async fn get_policy(
 }
 
 // ── Helper types and functions ──────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-pub struct PolicyQuery {
-    pub host_id: Uuid,
-}
 
 #[derive(Debug, sqlx::FromRow)]
 struct HostConfigOverrideRow {

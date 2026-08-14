@@ -46,6 +46,10 @@ mod tests {
             config_version: 1,
             pending_results: serde_json::json!([]),
             checked_in_at: Utc::now(),
+            apply_success: None,
+            apply_error: None,
+            applied_rule_count: None,
+            applied_at: None,
         };
         assert_eq!(check_in.rules_hash, "abc123");
         assert_eq!(check_in.agent_version, "0.2.0");
@@ -62,6 +66,7 @@ mod tests {
             safe_mode_enabled: false,
             backend_override: None,
             config_version: 1,
+            last_known_good_hash: None,
             updated_at: Utc::now(),
         };
         assert_eq!(override_cfg.check_in_interval_secs, 900);

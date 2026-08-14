@@ -117,16 +117,6 @@ mod tests {
     }
 
     #[test]
-    fn test_policy_query_deserialization() {
-        let json = r#"{"host_id": "550e8400-e29b-41d4-a716-446655440000"}"#;
-        let query: PolicyQuery = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            query.host_id,
-            Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()
-        );
-    }
-
-    #[test]
     fn test_config_update_serialization() {
         let config = ConfigUpdate {
             check_in_interval_secs: 300,
