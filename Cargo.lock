@@ -1101,7 +1101,7 @@ dependencies = [
 
 [[package]]
 name = "fw-agent"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1137,7 +1137,7 @@ dependencies = [
 
 [[package]]
 name = "fw-agent-client"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1156,7 +1156,7 @@ dependencies = [
 
 [[package]]
 name = "fw-auth"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "argon2",
  "async-trait",
@@ -1183,7 +1183,7 @@ dependencies = [
 
 [[package]]
 name = "fw-ca"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1202,7 +1202,7 @@ dependencies = [
 
 [[package]]
 name = "fw-core"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1231,7 +1231,7 @@ dependencies = [
 
 [[package]]
 name = "fw-reports"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "chrono",
  "fw-core",
@@ -1245,7 +1245,7 @@ dependencies = [
 
 [[package]]
 name = "fw-web"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1293,7 +1293,7 @@ dependencies = [
 
 [[package]]
 name = "fw-worker"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2053,7 +2053,7 @@ checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
 name = "migrate-secrets"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "aes-gcm",
  "anyhow",
