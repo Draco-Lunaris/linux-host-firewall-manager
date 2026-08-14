@@ -1,4 +1,4 @@
-// Tests for the stale agent detector and push dispatcher (Phase 4).
+// Tests for the stale agent detector (agent-pull model).
 // These tests verify the staleness calculation logic without a real database.
 
 #[cfg(test)]

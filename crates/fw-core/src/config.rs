@@ -52,17 +52,12 @@ fn default_web_tls_key_path() -> String {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkerConfig {
-    #[serde(default = "default_max_concurrent")]
-    pub max_concurrent_agent_calls: usize,
     #[serde(default = "default_health_poll")]
     pub health_poll_interval_secs: u64,
     #[serde(default = "default_drift_poll")]
     pub drift_poll_interval_secs: u64,
 }
 
-fn default_max_concurrent() -> usize {
-    64
-}
 fn default_health_poll() -> u64 {
     300
 }
@@ -73,7 +68,6 @@ fn default_drift_poll() -> u64 {
 impl Default for WorkerConfig {
     fn default() -> Self {
         Self {
-            max_concurrent_agent_calls: default_max_concurrent(),
             health_poll_interval_secs: default_health_poll(),
             drift_poll_interval_secs: default_drift_poll(),
         }

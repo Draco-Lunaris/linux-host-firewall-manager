@@ -17,7 +17,6 @@ web_tls_cert_path = "/etc/firewall-manager/tls/cert.pem"
 web_tls_key_path = "/etc/firewall-manager/tls/key.pem"
 
 [worker]
-max_concurrent_agent_calls = 64
 health_poll_interval_secs = 300
 drift_poll_interval_secs = 900
 
