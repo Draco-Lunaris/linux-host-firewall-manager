@@ -1136,25 +1136,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fw-agent-client"
-version = "0.2.3"
-dependencies = [
- "async-trait",
- "chrono",
- "fw-core",
- "reqwest",
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-rustls",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "fw-auth"
 version = "0.2.3"
 dependencies = [
@@ -1256,7 +1237,6 @@ dependencies = [
  "base64",
  "chrono",
  "dashmap 6.2.1",
- "fw-agent-client",
  "fw-auth",
  "fw-ca",
  "fw-core",
@@ -1299,7 +1279,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "dashmap 6.2.1",
- "fw-agent-client",
  "fw-auth",
  "fw-core",
  "lettre",
