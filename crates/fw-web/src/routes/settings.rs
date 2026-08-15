@@ -199,10 +199,10 @@ async fn update_ip_whitelist(
     // IP must be within at least one of the entries. This prevents an admin
     // from accidentally locking themselves out.
     if !validated.is_empty() {
-        let requester_ip = auth.ip.unwrap_or_else(|| {
-            // If we can't determine the IP, block the update as a safety measure
-            std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
-        });
+        // If we can't determine the IP, block the update as a safety measure.
+        let requester_ip = auth
+            .ip
+            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
 
         let covers_requester = validated.iter().any(|entry| {
             ipnet::IpNet::from_str(entry)

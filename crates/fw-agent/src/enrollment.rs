@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! CSR-based enrollment client (SEC-002).
 //!
 //! Flow:

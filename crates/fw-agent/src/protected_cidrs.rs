@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Protected CIDR enforcement (SEC-006).
 //!
 //! The agent rejects any rule that would block a protected CIDR

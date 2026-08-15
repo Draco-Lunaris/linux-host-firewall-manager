@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Firewall backend abstraction.
 //!
 //! The agent detects which backend is active on the host and uses it
@@ -17,18 +16,13 @@ use std::process::Command;
 pub enum BackendError {
     #[error("command failed: {0}")]
     CommandFailed(String),
-    #[error("not installed")]
-    NotInstalled,
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("container runtime detected: {0}")]
-    ContainerConflict(String),
 }
 
 #[derive(Debug, Clone)]
 pub struct CompiledRules {
     pub commands: Vec<String>,
-    pub backend_name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -149,10 +143,7 @@ impl FirewallBackend for UfwBackend {
         for rule in rules {
             commands.push(compile_ufw_rule(rule));
         }
-        Ok(CompiledRules {
-            commands,
-            backend_name: "ufw".to_string(),
-        })
+        Ok(CompiledRules { commands })
     }
 
     async fn apply(&self, compiled: &CompiledRules) -> Result<ApplyResult, BackendError> {
@@ -357,10 +348,7 @@ impl FirewallBackend for FirewalldBackend {
         for rule in rules {
             commands.push(compile_firewalld_rule(rule));
         }
-        Ok(CompiledRules {
-            commands,
-            backend_name: "firewalld".to_string(),
-        })
+        Ok(CompiledRules { commands })
     }
 
     async fn apply(&self, compiled: &CompiledRules) -> Result<ApplyResult, BackendError> {

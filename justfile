@@ -14,10 +14,11 @@ fmt:
     cargo fmt --all -- --check
 
 # NOTE: matches current CI intent but without -D warnings; the tree has ~4 pre-existing
-# clippy lints (type_complexity, unnecessary closure, dead field). Tightening to -D
-# warnings is a follow-up (same as LPM), not part of the releases-only change.
+# Clippy gate — warnings are errors. The pre-existing lints (type_complexity,
+# unnecessary closure, dead fields, io_other_error, manual_async_fn) were fixed
+# and the fw-agent #![allow(dead_code)] attrs dropped, so the tree is clean.
 clippy:
-    cargo clippy --all-targets --all-features
+    cargo clippy --all-targets --all-features -- -D warnings
 
 test:
     cargo test --workspace --all-features --lib --bins --tests

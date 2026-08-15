@@ -19,14 +19,17 @@ pub async fn run(db: Arc<PgPool>) {
     }
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct StaleHostRow {
+    id: uuid::Uuid,
+    fqdn: String,
+    last_check_in: Option<chrono::DateTime<chrono::Utc>>,
+    check_in_interval_secs: Option<i32>,
+}
+
 async fn detect_stale_agents(db: &PgPool) -> Result<(), sqlx::Error> {
     // Get all hosts with their last check-in time and configured interval
-    let hosts: Vec<(
-        uuid::Uuid,
-        String,
-        Option<chrono::DateTime<chrono::Utc>>,
-        Option<i32>,
-    )> = sqlx::query_as(
+    let hosts: Vec<StaleHostRow> = sqlx::query_as(
         "SELECT h.id, h.fqdn, MAX(ac.checked_in_at) as last_check_in, hco.check_in_interval_secs
              FROM hosts h
              LEFT JOIN agent_check_ins ac ON ac.host_id = h.id
@@ -39,7 +42,11 @@ async fn detect_stale_agents(db: &PgPool) -> Result<(), sqlx::Error> {
 
     let now = chrono::Utc::now();
 
-    for (host_id, fqdn, last_check_in, interval_secs) in hosts {
+    for h in hosts {
+        let host_id = h.id;
+        let fqdn = h.fqdn;
+        let last_check_in = h.last_check_in;
+        let interval_secs = h.check_in_interval_secs;
         let interval = interval_secs.unwrap_or(900) as i64;
         let stale_2x = interval * 2;
         let stale_4x = interval * 4;

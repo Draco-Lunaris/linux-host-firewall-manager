@@ -1,7 +1,4 @@
-#![allow(dead_code)]
 //! Drift detection — compare current rules to last known snapshot.
-
-use sha2::{Digest, Sha256};
 
 const EXPECTED_HASH_PATH: &str = "/var/lib/firewall-agent/expected_hash";
 
@@ -25,16 +22,6 @@ pub async fn check() -> anyhow::Result<()> {
         }
     }
     Ok(())
-}
-
-/// Compute a normalized hash from a list of rule strings.
-pub fn compute_hash(rules: &[String]) -> String {
-    let mut hasher = Sha256::new();
-    for rule in rules {
-        hasher.update(rule.as_bytes());
-        hasher.update(b"\n");
-    }
-    hex::encode(hasher.finalize())
 }
 
 /// The hash of the last ruleset the agent successfully applied, persisted across

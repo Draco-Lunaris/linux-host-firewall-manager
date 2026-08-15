@@ -254,7 +254,7 @@ async fn check_in(
 
     // Get config overrides for this host
     let config: Option<ConfigUpdate> = sqlx::query_as::<_, HostConfigOverrideRow>(
-        "SELECT host_id, check_in_interval_secs, push_enabled, safe_mode_enabled, backend_override, config_version, updated_at
+        "SELECT check_in_interval_secs, push_enabled, safe_mode_enabled, backend_override, config_version
          FROM host_config_overrides WHERE host_id = $1",
     )
     .bind(host_id)
@@ -396,13 +396,11 @@ async fn get_policy(
 
 #[derive(Debug, sqlx::FromRow)]
 struct HostConfigOverrideRow {
-    host_id: Uuid,
     check_in_interval_secs: i32,
     push_enabled: bool,
     safe_mode_enabled: bool,
     backend_override: Option<String>,
     config_version: i32,
-    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, sqlx::FromRow)]

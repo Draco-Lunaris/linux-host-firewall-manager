@@ -58,48 +58,46 @@ impl Listener for AgentTlsListener {
     type Io = TlsStream<tokio::net::TcpStream>;
     type Addr = ClientCertInfo;
 
-    fn accept(&mut self) -> impl std::future::Future<Output = (Self::Io, Self::Addr)> + Send {
-        async move {
-            loop {
-                let (stream, remote_addr) = match self.tcp.accept().await {
-                    Ok(t) => t,
-                    Err(e) => {
-                        tracing::warn!(error = %e, "agent listener: tcp accept failed");
-                        continue;
-                    }
-                };
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        loop {
+            let (stream, remote_addr) = match self.tcp.accept().await {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!(error = %e, "agent listener: tcp accept failed");
+                    continue;
+                }
+            };
 
-                let tls_stream = match self.acceptor.accept(stream).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        // No client cert (or otherwise invalid) => handshake rejected.
-                        tracing::warn!(error = %e, "agent mTLS handshake rejected");
-                        continue;
-                    }
-                };
+            let tls_stream = match self.acceptor.accept(stream).await {
+                Ok(s) => s,
+                Err(e) => {
+                    // No client cert (or otherwise invalid) => handshake rejected.
+                    tracing::warn!(error = %e, "agent mTLS handshake rejected");
+                    continue;
+                }
+            };
 
-                let host_id = match tls_stream
-                    .get_ref()
-                    .1
-                    .peer_certificates()
-                    .and_then(|certs| certs.first())
-                    .and_then(parse_host_id)
-                {
-                    Some(id) => id,
-                    None => {
-                        tracing::warn!("agent mTLS: client cert CN is not a host_id; dropping");
-                        continue;
-                    }
-                };
+            let host_id = match tls_stream
+                .get_ref()
+                .1
+                .peer_certificates()
+                .and_then(|certs| certs.first())
+                .and_then(parse_host_id)
+            {
+                Some(id) => id,
+                None => {
+                    tracing::warn!("agent mTLS: client cert CN is not a host_id; dropping");
+                    continue;
+                }
+            };
 
-                return (
-                    tls_stream,
-                    ClientCertInfo {
-                        host_id,
-                        remote_addr,
-                    },
-                );
-            }
+            return (
+                tls_stream,
+                ClientCertInfo {
+                    host_id,
+                    remote_addr,
+                },
+            );
         }
     }
 
@@ -154,5 +152,5 @@ pub fn build_agent_server_config(
 }
 
 fn io_err<E: std::fmt::Display>(e: E) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+    std::io::Error::other(e.to_string())
 }

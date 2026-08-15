@@ -34,6 +34,7 @@ fn acquire_apply_lock() -> std::io::Result<std::fs::File> {
         .create(true)
         .read(true)
         .write(true)
+        .truncate(true)
         .open(PATH)?;
     let r = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
     if r == 0 {
@@ -353,6 +354,15 @@ async fn apply_rules(
         .apply(&compiled)
         .await
         .map_err(|e| anyhow::anyhow!("Apply failed: {}", e))?;
+
+    tracing::info!(
+        applied = result.applied,
+        failed = result.failed,
+        "backend apply result"
+    );
+    if let Some(err) = &result.error {
+        tracing::warn!(error = %err, "backend reported an apply error");
+    }
 
     if result.failed > 0 {
         anyhow::bail!("{} rules failed to apply", result.failed);
