@@ -19,6 +19,30 @@ use crate::backend::FirewallBackend;
 use crate::config::AgentConfig;
 use crate::pull_client::{CheckInRequest, CheckInResultRequest, PullClient, RuleDto};
 
+/// Acquire an exclusive flock on `/run/firewall-agent/apply.lock` so that two
+/// agent processes — or a pending-action apply racing a rules-changed apply —
+/// can't compile+apply at the same time. The lock is held for as long as the
+/// returned `File` lives (released on drop). Acquired on a blocking thread so
+/// the wait doesn't stall the async runtime.
+fn acquire_apply_lock() -> std::io::Result<std::fs::File> {
+    use std::os::unix::io::AsRawFd;
+    const PATH: &str = "/run/firewall-agent/apply.lock";
+    if let Some(parent) = std::path::Path::new(PATH).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(PATH)?;
+    let r = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+    if r == 0 {
+        Ok(file)
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
 /// Run the pull loop as a background task.
 pub async fn run_pull_loop(
     backend: Arc<dyn FirewallBackend>,
@@ -209,6 +233,14 @@ async fn apply_rules_from_dto(
     {
         anyhow::bail!("protected CIDR violations: {}", violations.join("; "));
     }
+
+    // Hold the per-host apply mutex for the whole compile+apply so concurrent
+    // applies can't race (S6.1). Acquired on a blocking thread; held until the
+    // guard drops at the end of this function.
+    let _apply_lock = tokio::task::spawn_blocking(acquire_apply_lock)
+        .await
+        .map_err(|e| anyhow::anyhow!("apply lock task: {}", e))?
+        .map_err(|e| anyhow::anyhow!("acquire apply lock: {}", e))?;
 
     // Compile the rules
     let compiled = backend
