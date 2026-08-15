@@ -445,6 +445,8 @@ export const policySetsApi = {
   listRules: (id: string) => apiClient.get<{ rules: FirewallRule[] }>(`/policy-sets/${id}/rules`),
   addRule: (id: string, ruleId: string, order?: number) => apiClient.post(`/policy-sets/${id}/rules`, { rule_id: ruleId, rule_order: order }),
   removeRule: (id: string, ruleId: string) => apiClient.delete(`/policy-sets/${id}/rules/${ruleId}`),
+  /** PUT /policy-sets/{id}/rules/reorder — rewrite rule_order to match the given order. */
+  reorder: (id: string, ruleIds: string[]) => apiClient.put(`/policy-sets/${id}/rules/reorder`, { rule_ids: ruleIds }),
   preview: (id: string) => apiClient.post<PreviewCompilationResponse>(`/policy-sets/${id}/preview`),
 }
 
