@@ -66,7 +66,6 @@ pub struct RuleDto {
 #[derive(Debug, Deserialize)]
 pub struct ConfigUpdate {
     pub check_in_interval_secs: i32,
-    pub push_enabled: bool,
     pub safe_mode_enabled: bool,
     pub backend_override: Option<String>,
     pub config_version: i32,

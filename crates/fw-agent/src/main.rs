@@ -4,16 +4,12 @@ use anyhow::Context;
 use fw_agent::pull_client;
 
 mod backend;
-mod compiler;
 mod config;
 mod drift;
 mod enrollment;
-mod mtls;
 mod protected_cidrs;
 mod pull_loop;
-mod routes;
 mod safe_mode;
-mod server;
 
 use clap::{Parser, Subcommand};
 
@@ -104,7 +100,8 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Run the agent daemon — starts both the pull loop (primary) and the push server (secondary).
+/// Run the agent daemon — starts the pull loop (the only apply path in the
+/// pull model; the manager never contacts the agent).
 async fn run_daemon() -> anyhow::Result<()> {
     let cfg = config::AgentConfig::load()
         .ok_or_else(|| anyhow::anyhow!("Agent not configured — run 'fw-agent enroll' first"))?;
@@ -149,21 +146,11 @@ async fn run_daemon() -> anyhow::Result<()> {
     tokio::spawn(async move {
         pull_loop::run_pull_loop(pull_backend, pull_config, pull_client).await;
     });
-    tracing::info!("Pull loop started (primary mode)");
+    tracing::info!("Pull loop started (pull-only mode)");
 
-    // Start the push server (secondary, for emergency push) if push_enabled
-    if cfg.pull.push_enabled {
-        tracing::info!("Push server starting (secondary mode, for emergency push)");
-        // The existing server::run() handles the mTLS push server
-        // For now, we just log — the push server will be wired in Phase 4
-        // when we rework the worker's push dispatcher
-        tokio::signal::ctrl_c().await?;
-        tracing::info!("Agent shutting down");
-    } else {
-        tracing::info!("Push server disabled — pull-only mode");
-        tokio::signal::ctrl_c().await?;
-        tracing::info!("Agent shutting down");
-    }
+    // No push server in the pull model — the manager never contacts the agent.
+    tokio::signal::ctrl_c().await?;
+    tracing::info!("Agent shutting down");
 
     Ok(())
 }
@@ -176,7 +163,6 @@ async fn status_report() -> anyhow::Result<()> {
         if let Some(id) = c.host_id {
             println!("Host ID: {}", id);
         }
-        println!("Listen port: {}", c.listen_port);
         println!(
             "Safe mode: {} (timeout: {}s)",
             if c.safe_mode_enabled {

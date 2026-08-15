@@ -123,7 +123,6 @@ async fn run_pull_cycle(
             let mut cfg = config.write().await;
             cfg.pull.check_in_interval_secs = *interval_secs;
             cfg.pull.config_version = *config_version;
-            cfg.pull.push_enabled = cfg_update.push_enabled;
             cfg.safe_mode_enabled = cfg_update.safe_mode_enabled;
         }
         tracing::info!(
