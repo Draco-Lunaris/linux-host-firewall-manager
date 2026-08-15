@@ -95,8 +95,10 @@ async fn submit_enrollment(
     // Create enrollment request
     let machine_id = format!("{}-{}", req.fqdn, req.ip_address);
     let polling_token = Uuid::new_v4().to_string();
-    let polling_hash = fw_auth::password::hash_password(&polling_token)
-        .map_err(|e| fw_core::AppError::Internal(e.to_string()))?;
+    // Deterministic hash (SHA-256) so the status poll can look the request up by
+    // re-hashing the presented token. Argon2 (hash_password) is salted and would
+    // never match on re-computation.
+    let polling_hash = hex::encode(sha2::Sha256::digest(polling_token.as_bytes()));
 
     sqlx::query(
         "INSERT INTO enrollment_requests (machine_id, fqdn, ip_address, hostname, os_details, polling_token, csr)
@@ -136,9 +138,22 @@ async fn poll_enrollment_status(
     State(state): State<std::sync::Arc<AppState>>,
     Path(token): Path<String>,
 ) -> Result<Json<EnrollmentStatusResponse>, fw_core::AppError> {
-    let hash = fw_auth::password::hash_password(&token)
-        .map_err(|e| fw_core::AppError::Internal(e.to_string()))?;
+    let hash = hex::encode(sha2::Sha256::digest(token.as_bytes()));
 
+    // Approved? The approve flow caches the bundle and then DELETES the
+    // enrollment_requests row, so check the cache before the row lookup —
+    // otherwise the agent's post-approval poll would 404 and never receive
+    // its cert bundle.
+    if let Some(entry) = state.approved_enrollments.get(&hash) {
+        let bundle = entry.pki_bundle.clone();
+        state.approved_enrollments.remove(&hash);
+        return Ok(Json(EnrollmentStatusResponse {
+            status: "approved".to_string(),
+            pki_bundle: Some(bundle),
+        }));
+    }
+
+    // Pending? (Request still exists and not expired.)
     let row: Option<(Uuid, String)> = sqlx::query_as(
         "SELECT id, fqdn FROM enrollment_requests WHERE polling_token = $1 AND expires_at > NOW()",
     )
@@ -147,21 +162,10 @@ async fn poll_enrollment_status(
     .await?;
 
     match row {
-        Some((_id, _fqdn)) => {
-            // Check if approved
-            if let Some(entry) = state.approved_enrollments.get(&hash) {
-                let bundle = entry.pki_bundle.clone();
-                state.approved_enrollments.remove(&hash);
-                return Ok(Json(EnrollmentStatusResponse {
-                    status: "approved".to_string(),
-                    pki_bundle: Some(bundle),
-                }));
-            }
-            Ok(Json(EnrollmentStatusResponse {
-                status: "pending".to_string(),
-                pki_bundle: None,
-            }))
-        }
+        Some((_id, _fqdn)) => Ok(Json(EnrollmentStatusResponse {
+            status: "pending".to_string(),
+            pki_bundle: None,
+        })),
         None => Err(fw_core::AppError::NotFound(
             "Enrollment not found or expired".to_string(),
         )),
