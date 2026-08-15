@@ -3,6 +3,8 @@
 
 use sha2::{Digest, Sha256};
 
+const EXPECTED_HASH_PATH: &str = "/var/lib/firewall-agent/expected_hash";
+
 pub async fn check() -> anyhow::Result<()> {
     let backend = crate::backend::detect();
     match backend {
@@ -33,4 +35,23 @@ pub fn compute_hash(rules: &[String]) -> String {
         hasher.update(b"\n");
     }
     hex::encode(hasher.finalize())
+}
+
+/// The hash of the last ruleset the agent successfully applied, persisted across
+/// restarts. Each cycle the live snapshot hash is compared to this; a mismatch
+/// means the rules changed out-of-band (local drift) and the agent should check
+/// in early so the manager can re-apply.
+pub fn load_expected_hash() -> Option<String> {
+    std::fs::read_to_string(EXPECTED_HASH_PATH)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+pub fn save_expected_hash(hash: &str) -> anyhow::Result<()> {
+    if let Some(parent) = std::path::Path::new(EXPECTED_HASH_PATH).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(EXPECTED_HASH_PATH, hash)?;
+    Ok(())
 }

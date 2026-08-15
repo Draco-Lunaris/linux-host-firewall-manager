@@ -62,7 +62,7 @@ pub async fn run_pull_loop(
     loop {
         tracing::info!(host_id = %host_id, interval = interval_secs, "Pull cycle starting");
 
-        if let Err(e) = run_pull_cycle(
+        let local_drift = match run_pull_cycle(
             &backend,
             &config,
             &pull_client,
@@ -72,10 +72,17 @@ pub async fn run_pull_loop(
         )
         .await
         {
-            tracing::error!(error = %e, "Pull cycle failed");
-        }
+            Ok(d) => d,
+            Err(e) => {
+                tracing::error!(error = %e, "Pull cycle failed");
+                false
+            }
+        };
 
-        wait_for_next_cycle(&pull_client, interval_secs).await;
+        // On local drift, check in again soon (30s) instead of waiting the full
+        // interval, so the manager can re-apply the expected ruleset.
+        let wait_secs = if local_drift { 30 } else { interval_secs };
+        wait_for_next_cycle(&pull_client, wait_secs).await;
     }
 }
 
@@ -109,13 +116,28 @@ async fn run_pull_cycle(
     host_id: uuid::Uuid,
     interval_secs: &mut u32,
     config_version: &mut i32,
-) -> Result<()> {
+) -> Result<bool> {
     // 1. Compute current rules hash from backend snapshot
     let snapshot = backend
         .snapshot()
         .await
         .context("Failed to get backend snapshot")?;
     let rules_hash = snapshot.hash;
+
+    // Local drift: the live rules differ from the last-applied ruleset (someone
+    // changed them out-of-band). Schedule an early check-in so the manager can
+    // re-apply sooner. (The manager also detects this via check_in_mismatch.)
+    let local_drift = match crate::drift::load_expected_hash() {
+        Some(expected) if expected != rules_hash => {
+            tracing::warn!(
+                expected = %expected,
+                actual = %rules_hash,
+                "Local drift detected — live rules differ from last applied; scheduling early check-in"
+            );
+            true
+        }
+        _ => false,
+    };
 
     // 2. Gather agent info
     let _backend_status = backend
@@ -165,6 +187,8 @@ async fn run_pull_cycle(
         let protected_cidrs = config.read().await.protected_cidrs.clone();
         match apply_rules_from_dto(backend, &response.rules, &protected_cidrs).await {
             Ok(new_hash) => {
+                // Persist the last-applied hash for local drift detection (S6.3).
+                let _ = crate::drift::save_expected_hash(&new_hash);
                 let result_req = CheckInResultRequest {
                     host_id,
                     action_id: None,
@@ -213,7 +237,7 @@ async fn run_pull_cycle(
         }
     }
 
-    Ok(())
+    Ok(local_drift)
 }
 
 /// Convert RuleDto list to FirewallRule list, compile, and apply via backend.
