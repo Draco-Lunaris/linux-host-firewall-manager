@@ -9,6 +9,7 @@ use axum::{
 use fw_auth::rbac::AuthUser;
 use fw_core::models::{
     FirewallAction, FirewallDirection, FirewallPolicySet, FirewallProtocol, FirewallRule,
+    FIREWALL_RULE_COLS_R,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -198,12 +199,12 @@ async fn list_policy_set_rules(
     _auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<PolicySetRulesResponse>, fw_core::AppError> {
-    let rules: Vec<FirewallRule> = sqlx::query_as(
-        "SELECT r.* FROM firewall_rules r
+    let rules: Vec<FirewallRule> = sqlx::query_as(&format!(
+        "SELECT {FIREWALL_RULE_COLS_R} FROM firewall_rules r
          JOIN firewall_policy_set_rules psr ON psr.rule_id = r.id
          WHERE psr.policy_set_id = $1
-         ORDER BY psr.rule_order, r.priority",
-    )
+         ORDER BY psr.rule_order, r.priority"
+    ))
     .bind(id)
     .fetch_all(&state.db)
     .await?;
@@ -355,12 +356,12 @@ async fn preview_compilation(
     _auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<PreviewCompilationResponse>, fw_core::AppError> {
-    let rules: Vec<FirewallRule> = sqlx::query_as(
-        "SELECT r.* FROM firewall_rules r
+    let rules: Vec<FirewallRule> = sqlx::query_as(&format!(
+        "SELECT {FIREWALL_RULE_COLS_R} FROM firewall_rules r
          JOIN firewall_policy_set_rules psr ON psr.rule_id = r.id
          WHERE psr.policy_set_id = $1
-         ORDER BY psr.rule_order, r.priority",
-    )
+         ORDER BY psr.rule_order, r.priority"
+    ))
     .bind(id)
     .fetch_all(&state.db)
     .await?;

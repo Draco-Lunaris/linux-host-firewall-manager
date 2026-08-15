@@ -212,6 +212,25 @@ pub struct FirewallRule {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Column list for `firewall_rules` with the inet CIDR columns cast to text.
+/// sqlx cannot decode `inet` into the model's `Option<String>` fields, so
+/// every SELECT/RETURNING over `firewall_rules` must use this list (casting
+/// `src_cidr`/`dst_cidr` to text and aliasing them back to the column name for
+/// `FromRow`) instead of `*`. INSERT/UPDATE binds of those columns must use
+/// `$N::inet` for the reverse direction (text → inet).
+pub const FIREWALL_RULE_COLS: &str = "id, name, description, action, direction, \
+    protocol, src_cidr::text AS src_cidr, src_port_start, src_port_end, \
+    dst_cidr::text AS dst_cidr, dst_port_start, dst_port_end, interface_in, \
+    interface_out, comment, log, priority, created_by, created_at, updated_at";
+
+/// Same as `FIREWALL_RULE_COLS` but with the `r.` table alias, for joins that
+/// select from `firewall_rules r` (e.g. policy-set rule listings).
+pub const FIREWALL_RULE_COLS_R: &str = "r.id, r.name, r.description, r.action, \
+    r.direction, r.protocol, r.src_cidr::text AS src_cidr, r.src_port_start, \
+    r.src_port_end, r.dst_cidr::text AS dst_cidr, r.dst_port_start, \
+    r.dst_port_end, r.interface_in, r.interface_out, r.comment, r.log, \
+    r.priority, r.created_by, r.created_at, r.updated_at";
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct FirewallPolicySet {
     pub id: Uuid,

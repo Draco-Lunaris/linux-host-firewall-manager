@@ -7,7 +7,9 @@ use axum::{
     Json, Router,
 };
 use fw_auth::rbac::AuthUser;
-use fw_core::models::{FirewallAction, FirewallDirection, FirewallProtocol, FirewallRule};
+use fw_core::models::{
+    FirewallAction, FirewallDirection, FirewallProtocol, FirewallRule, FIREWALL_RULE_COLS,
+};
 use fw_core::policy::{check_against_protected_cidrs, check_rule};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -32,10 +34,11 @@ async fn list_rules(
     State(state): State<std::sync::Arc<AppState>>,
     _auth: AuthUser,
 ) -> Result<Json<RuleListResponse>, fw_core::AppError> {
-    let rules: Vec<FirewallRule> =
-        sqlx::query_as("SELECT * FROM firewall_rules ORDER BY priority, name")
-            .fetch_all(&state.db)
-            .await?;
+    let rules: Vec<FirewallRule> = sqlx::query_as(&format!(
+        "SELECT {FIREWALL_RULE_COLS} FROM firewall_rules ORDER BY priority, name"
+    ))
+    .fetch_all(&state.db)
+    .await?;
     let total = rules.len() as i64;
     Ok(Json(RuleListResponse { rules, total }))
 }
@@ -46,10 +49,11 @@ async fn list_flagged_rules(
     State(state): State<std::sync::Arc<AppState>>,
     _auth: AuthUser,
 ) -> Result<Json<Vec<FirewallRule>>, fw_core::AppError> {
-    let rules: Vec<FirewallRule> =
-        sqlx::query_as("SELECT * FROM firewall_rules ORDER BY priority, name")
-            .fetch_all(&state.db)
-            .await?;
+    let rules: Vec<FirewallRule> = sqlx::query_as(&format!(
+        "SELECT {FIREWALL_RULE_COLS} FROM firewall_rules ORDER BY priority, name"
+    ))
+    .fetch_all(&state.db)
+    .await?;
     let flagged: Vec<FirewallRule> = rules
         .into_iter()
         .filter(|r| fw_core::policy::check_rule(r).requires_approval)
@@ -88,11 +92,11 @@ async fn create_rule(
         ));
     }
 
-    let rule = sqlx::query_as(
+    let rule = sqlx::query_as(&format!(
         "INSERT INTO firewall_rules (name, description, action, direction, protocol, src_cidr, src_port_start, src_port_end, dst_cidr, dst_port_start, dst_port_end, interface_in, interface_out, comment, log, priority, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-         RETURNING *",
-    )
+         VALUES ($1, $2, $3, $4, $5, $6::inet, $7, $8, $9::inet, $10, $11, $12, $13, $14, $15, $16, $17)
+         RETURNING {FIREWALL_RULE_COLS}"
+    ))
     .bind(&req.name)
     .bind(req.description.unwrap_or_default())
     .bind(&req.action)
@@ -151,11 +155,13 @@ async fn get_rule(
     _auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<FirewallRule>, fw_core::AppError> {
-    let rule: FirewallRule = sqlx::query_as("SELECT * FROM firewall_rules WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| fw_core::AppError::NotFound("Rule not found".to_string()))?;
+    let rule: FirewallRule = sqlx::query_as(&format!(
+        "SELECT {FIREWALL_RULE_COLS} FROM firewall_rules WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| fw_core::AppError::NotFound("Rule not found".to_string()))?;
     Ok(Json(rule))
 }
 
@@ -191,17 +197,17 @@ async fn update_rule(
         ));
     }
 
-    let rule: FirewallRule = sqlx::query_as(
+    let rule: FirewallRule = sqlx::query_as(&format!(
         "UPDATE firewall_rules SET
             name = COALESCE($2, name),
             description = COALESCE($3, description),
             action = COALESCE($4, action),
             direction = COALESCE($5, direction),
             protocol = COALESCE($6, protocol),
-            src_cidr = COALESCE($7, src_cidr),
+            src_cidr = COALESCE($7::inet, src_cidr),
             src_port_start = COALESCE($8, src_port_start),
             src_port_end = COALESCE($9, src_port_end),
-            dst_cidr = COALESCE($10, dst_cidr),
+            dst_cidr = COALESCE($10::inet, dst_cidr),
             dst_port_start = COALESCE($11, dst_port_start),
             dst_port_end = COALESCE($12, dst_port_end),
             interface_in = COALESCE($13, interface_in),
@@ -210,8 +216,8 @@ async fn update_rule(
             log = COALESCE($16, log),
             priority = COALESCE($17, priority),
             updated_at = NOW()
-         WHERE id = $1 RETURNING *",
-    )
+         WHERE id = $1 RETURNING {FIREWALL_RULE_COLS}"
+    ))
     .bind(id)
     .bind(&req.name)
     .bind(&req.description)
@@ -298,11 +304,13 @@ async fn validate_rule(
     _auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<ValidateRuleResponse>, fw_core::AppError> {
-    let rule: FirewallRule = sqlx::query_as("SELECT * FROM firewall_rules WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| fw_core::AppError::NotFound("Rule not found".to_string()))?;
+    let rule: FirewallRule = sqlx::query_as(&format!(
+        "SELECT {FIREWALL_RULE_COLS} FROM firewall_rules WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| fw_core::AppError::NotFound("Rule not found".to_string()))?;
 
     let policy_result = check_rule(&rule);
 

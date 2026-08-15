@@ -6,7 +6,7 @@
 
 use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
 use fw_auth::rbac::AuthUser;
-use fw_core::models::FirewallRule;
+use fw_core::models::{FirewallRule, FIREWALL_RULE_COLS_R};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -212,12 +212,12 @@ async fn preview_assignment(
     _auth: AuthUser,
     Json(req): Json<PreviewRequest>,
 ) -> Result<Json<PreviewResponse>, fw_core::AppError> {
-    let rules: Vec<FirewallRule> = sqlx::query_as(
-        "SELECT r.* FROM firewall_rules r
+    let rules: Vec<FirewallRule> = sqlx::query_as(&format!(
+        "SELECT {FIREWALL_RULE_COLS_R} FROM firewall_rules r
          JOIN firewall_policy_set_rules psr ON psr.rule_id = r.id
          WHERE psr.policy_set_id = $1
-         ORDER BY psr.rule_order, r.priority",
-    )
+         ORDER BY psr.rule_order, r.priority"
+    ))
     .bind(req.policy_set_id)
     .fetch_all(&state.db)
     .await?;
