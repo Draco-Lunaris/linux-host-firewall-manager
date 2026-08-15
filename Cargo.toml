@@ -6,7 +6,6 @@ members = [
     "crates/fw-core",
     "crates/fw-auth",
     "crates/fw-ca",
-    "crates/fw-reports",
     "crates/fw-agent",
     "crates/migrate-secrets",
 ]
@@ -97,7 +96,6 @@ lettre = { version = "0.11.22", default-features = false, features = ["tokio1-ru
 fw-core = { path = "crates/fw-core" }
 fw-auth = { path = "crates/fw-auth" }
 fw-ca = { path = "crates/fw-ca" }
-fw-reports = { path = "crates/fw-reports" }
 
 [profile.release]
 strip = true

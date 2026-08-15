@@ -9,7 +9,6 @@ license.workspace = true
 fw-core = { workspace = true }
 fw-auth = { workspace = true }
 fw-ca = { workspace = true }
-fw-reports = { workspace = true }
 sqlx = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1213,20 +1213,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fw-reports"
-version = "0.2.3"
-dependencies = [
- "chrono",
- "fw-core",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "fw-web"
 version = "0.2.3"
 dependencies = [
@@ -1242,7 +1228,6 @@ dependencies = [
  "fw-auth",
  "fw-ca",
  "fw-core",
- "fw-reports",
  "governor 0.6.3",
  "hex",
  "ipnet",
