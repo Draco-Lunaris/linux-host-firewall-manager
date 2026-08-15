@@ -100,7 +100,7 @@ async fn submit_enrollment(
 
     sqlx::query(
         "INSERT INTO enrollment_requests (machine_id, fqdn, ip_address, hostname, os_details, polling_token, csr)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         VALUES ($1, $2, $3::inet, $4, $5, $6, $7)
          ON CONFLICT (machine_id) DO UPDATE SET polling_token = $6, csr = $7, created_at = NOW()",
     )
     .bind(&machine_id)
@@ -205,7 +205,7 @@ async fn approve_enrollment(
 
     // Check FQDN/IP collision
     let collision: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM hosts WHERE fqdn = $1 AND ip_address = $2")
+        sqlx::query_scalar("SELECT COUNT(*) FROM hosts WHERE fqdn = $1 AND ip_address = $2::inet")
             .bind(&fqdn)
             .bind(&ip)
             .fetch_one(&state.db)
@@ -219,7 +219,7 @@ async fn approve_enrollment(
 
     // Insert host
     let host_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO hosts (fqdn, ip_address, display_name, os_name) VALUES ($1, $2, $3, $4) RETURNING id",
+        "INSERT INTO hosts (fqdn, ip_address, display_name, os_name) VALUES ($1, $2::inet, $3, $4) RETURNING id",
     )
     .bind(&fqdn)
     .bind(&ip)
@@ -373,7 +373,7 @@ async fn create_token(
     let ttl_hours = req.ttl_hours.unwrap_or(24);
 
     sqlx::query(
-        "INSERT INTO enrollment_tokens (token_hash, host_fqdn, host_ip, created_by, expires_at) VALUES ($1, $2, $3, $4, NOW() + $5::bigint * INTERVAL '1 hour')",
+        "INSERT INTO enrollment_tokens (token_hash, host_fqdn, host_ip, created_by, expires_at) VALUES ($1, $2, $3::inet, $4, NOW() + $5::bigint * INTERVAL '1 hour')",
     )
     .bind(&token_hash)
     .bind(&req.host_fqdn)
