@@ -177,7 +177,8 @@ async fn list_enrollments(
     _auth: AuthUser,
 ) -> Result<Json<Vec<fw_core::models::EnrollmentRequest>>, fw_core::AppError> {
     let requests: Vec<fw_core::models::EnrollmentRequest> = sqlx::query_as(
-        "SELECT * FROM enrollment_requests WHERE expires_at > NOW() ORDER BY created_at DESC",
+        "SELECT id, machine_id, fqdn, ip_address::text, hostname, os_details, polling_token, csr, created_at, expires_at
+         FROM enrollment_requests WHERE expires_at > NOW() ORDER BY created_at DESC",
     )
     .fetch_all(&state.db)
     .await?;
@@ -198,7 +199,7 @@ async fn approve_enrollment(
     // Fetch enrollment request
     let req: Option<(String, String, Option<String>, serde_json::Value, String, Option<String>)> =
         sqlx::query_as(
-            "SELECT fqdn, ip_address, hostname, os_details, polling_token, csr FROM enrollment_requests WHERE id = $1",
+            "SELECT fqdn, ip_address::text, hostname, os_details, polling_token, csr FROM enrollment_requests WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&state.db)
@@ -330,7 +331,7 @@ async fn list_tokens(
     _auth: AuthUser,
 ) -> Result<Json<Vec<serde_json::Value>>, fw_core::AppError> {
     let tokens: Vec<(String, String, Option<String>, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
-        "SELECT host_fqdn, token_hash, host_ip, expires_at, used_at FROM enrollment_tokens WHERE used_at IS NULL AND revoked_at IS NULL ORDER BY expires_at DESC",
+        "SELECT host_fqdn, token_hash, host_ip::text, expires_at, used_at FROM enrollment_tokens WHERE used_at IS NULL AND revoked_at IS NULL ORDER BY expires_at DESC",
     )
     .fetch_all(&state.db)
     .await?;
