@@ -16,13 +16,13 @@ mod tests {
                 check_in_interval_secs: 900,
                 push_enabled: true,
                 config_version: 1,
-                manager_check_in_url: "https://manager:443/api/v1/agent/check-in".to_string(),
+                manager_agent_url: "https://manager:8443".to_string(),
             }),
         };
         let json = serde_json::to_string(&bundle).unwrap();
         assert!(json.contains("\"check_in_interval_secs\":900"));
         assert!(json.contains("\"push_enabled\":true"));
-        assert!(json.contains("\"manager_check_in_url\""));
+        assert!(json.contains("\"manager_agent_url\""));
     }
 
     #[test]
@@ -48,7 +48,7 @@ mod tests {
                 "check_in_interval_secs": 300,
                 "push_enabled": false,
                 "config_version": 2,
-                "manager_check_in_url": "https://fwm:443/api/v1/agent/check-in"
+                "manager_agent_url": "https://fwm:8443"
             }
         }"#;
         let bundle: PkiBundle = serde_json::from_str(json).unwrap();

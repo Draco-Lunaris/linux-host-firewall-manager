@@ -37,6 +37,7 @@ rcgen = { workspace = true }
 url = { workspace = true }
 hostname = "0.4"
 ipnet = { workspace = true }
+shlex = "2.0"
 
 [[bin]]
 name = "fw-agent"

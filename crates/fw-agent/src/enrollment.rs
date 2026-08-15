@@ -125,7 +125,12 @@ pub async fn enroll(manager_url: &str, token: &str, fqdn: &str) -> Result<()> {
                         if let Some(bundle) = status_resp.pki_bundle {
                             println!("Enrollment approved! Writing certificates...");
                             write_pki_bundle(&bundle, &key_pem)?;
-                            save_config(manager_url, fqdn)?;
+                            save_config(
+                                manager_url,
+                                fqdn,
+                                bundle.pull_config.as_ref(),
+                                status_resp.host_id.as_deref(),
+                            )?;
                             println!("Enrollment complete. Agent ready to run.");
                             return Ok(());
                         }
@@ -239,19 +244,39 @@ fn write_pki_bundle(bundle: &PkiBundle, server_key_pem: &str) -> Result<()> {
     Ok(())
 }
 
-fn save_config(manager_url: &str, fqdn: &str) -> Result<()> {
+fn save_config(
+    manager_url: &str,
+    fqdn: &str,
+    pull: Option<&BundlePullConfig>,
+    host_id: Option<&str>,
+) -> Result<()> {
     // Seed the manager's IP as a protected CIDR so the agent never accepts a
     // rule that would block or expose the management interface (SEC-006).
     let protected_cidrs = crate::protected_cidrs::auto_detect_manager_cidr(manager_url)
         .map(|ip| vec![format!("{}/32", ip)])
         .unwrap_or_default();
 
-    let config = crate::config::AgentConfig {
+    let mut config = crate::config::AgentConfig {
         manager_url: manager_url.to_string(),
         fqdn: fqdn.to_string(),
         protected_cidrs,
         ..Default::default()
     };
+    // Persist the manager-provided pull config (check-in URL + interval +
+    // config version). Without this the check-in loop runs against an empty
+    // URL and a zero config version, so the agent can never poll the manager
+    // after enrollment.
+    if let Some(p) = pull {
+        config.pull.check_in_interval_secs = p.check_in_interval_secs;
+        config.pull.manager_agent_url = p.manager_agent_url.clone();
+        config.pull.config_version = p.config_version;
+    }
+    // Persist the manager-assigned host_id. `run_daemon` refuses to start
+    // without it (it needs the identity for check-in), so omitting it here
+    // would leave the agent enrolled but unable to run.
+    if let Some(id) = host_id {
+        config.host_id = Some(id.to_string());
+    }
     config.save().context("Failed to save agent config")?;
     println!(
         "Config saved to {}",
@@ -269,6 +294,9 @@ struct SubmitResponse {
 struct EnrollmentStatusResponse {
     status: String,
     pki_bundle: Option<PkiBundle>,
+    /// Manager-assigned host_id (present on approval). Persisted into config
+    /// so the pull loop knows its own identity for check-in.
+    host_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -276,4 +304,20 @@ struct PkiBundle {
     ca_chain: Vec<String>,
     server_cert: String,
     crl_pem: Option<String>,
+    /// Pull-model config the manager hands the agent on approval. Persisted
+    /// into config.toml so the check-in loop knows where to poll and at what
+    /// interval. Older managers that omit this field still enroll (serde
+    /// defaults the whole `pull_config` to `None`).
+    pull_config: Option<BundlePullConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BundlePullConfig {
+    check_in_interval_secs: u32,
+    #[serde(default)]
+    #[allow(dead_code)]
+    push_enabled: bool,
+    config_version: i32,
+    #[serde(default)]
+    manager_agent_url: String,
 }

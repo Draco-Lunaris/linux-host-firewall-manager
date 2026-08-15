@@ -43,6 +43,10 @@ pub struct SubmitEnrollmentRequest {
 pub struct EnrollmentStatusResponse {
     pub status: String,
     pub pki_bundle: Option<fw_core::models::PkiBundle>,
+    /// The manager-assigned host_id (present on approval). The agent persists
+    /// this into its config so the pull loop knows its own identity for
+    /// check-in. The cert CN remains the authoritative identity at mTLS time.
+    pub host_id: Option<String>,
 }
 
 async fn submit_enrollment(
@@ -144,12 +148,18 @@ async fn poll_enrollment_status(
     // enrollment_requests row, so check the cache before the row lookup —
     // otherwise the agent's post-approval poll would 404 and never receive
     // its cert bundle.
-    if let Some(entry) = state.approved_enrollments.get(&hash) {
-        let bundle = entry.pki_bundle.clone();
-        state.approved_enrollments.remove(&hash);
+    //
+    // Use `remove` (returns the value, no held guard) rather than `get` then
+    // `remove`: DashMap shards by key, so `get` returns a `Ref` holding a
+    // read-lock on the shard, and calling `remove` on the same key while that
+    // guard is live deadlocks the worker thread (write-lock waiting on the
+    // held read-lock). The single-retrieval semantics are preserved — the
+    // entry is removed atomically, so a concurrent poll never sees it twice.
+    if let Some((_, entry)) = state.approved_enrollments.remove(&hash) {
         return Ok(Json(EnrollmentStatusResponse {
             status: "approved".to_string(),
-            pki_bundle: Some(bundle),
+            pki_bundle: Some(entry.pki_bundle),
+            host_id: Some(entry.host_id.to_string()),
         }));
     }
 
@@ -165,6 +175,7 @@ async fn poll_enrollment_status(
         Some((_id, _fqdn)) => Ok(Json(EnrollmentStatusResponse {
             status: "pending".to_string(),
             pki_bundle: None,
+            host_id: None,
         })),
         None => Err(fw_core::AppError::NotFound(
             "Enrollment not found or expired".to_string(),
@@ -242,11 +253,14 @@ async fn approve_enrollment(
     .execute(&state.db)
     .await;
 
-    // Build the manager check-in URL. The agent API lives on the dedicated mTLS
+    // Build the agent API base URL. The agent API lives on the dedicated mTLS
     // agent_port (8443), not the human-UI port (443) — handing out the human-UI
     // port would send the agent to a listener that never mounts the agent API.
-    let manager_check_in_url = format!(
-        "https://{}:{}/api/v1/agent/check-in",
+    // This is a *base* URL (scheme://host:port); the agent appends the endpoint
+    // paths so all four agent endpoints (check-in, check-in/result, policy,
+    // events) share it.
+    let manager_agent_url = format!(
+        "https://{}:{}",
         state.config.server.host, state.config.server.agent_port
     );
 
@@ -273,7 +287,7 @@ async fn approve_enrollment(
             check_in_interval_secs: 900,
             push_enabled: true,
             config_version: 1,
-            manager_check_in_url,
+            manager_agent_url,
         }),
     };
 

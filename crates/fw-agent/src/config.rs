@@ -27,7 +27,7 @@ pub struct PullConfig {
     #[serde(default = "default_check_in_interval")]
     pub check_in_interval_secs: u32,
     #[serde(default)]
-    pub manager_check_in_url: String,
+    pub manager_agent_url: String,
     #[serde(default)]
     pub config_version: i32,
 }
@@ -63,7 +63,7 @@ impl Default for AgentConfig {
             protected_cidrs: Vec::new(),
             pull: PullConfig {
                 check_in_interval_secs: default_check_in_interval(),
-                manager_check_in_url: String::new(),
+                manager_agent_url: String::new(),
                 config_version: 0,
             },
         }

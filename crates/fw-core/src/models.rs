@@ -397,7 +397,11 @@ pub struct PullConfigBundle {
     pub check_in_interval_secs: i32,
     pub push_enabled: bool,
     pub config_version: i32,
-    pub manager_check_in_url: String,
+    /// Base URL of the manager's agent mTLS API (e.g. "https://mgr:8443").
+    /// The agent appends the endpoint paths (`/api/v1/agent/check-in`, …) —
+    /// this is a *base*, not the full check-in URL, so all four agent
+    /// endpoints (check-in, check-in/result, policy, events) share it.
+    pub manager_agent_url: String,
 }
 
 // ============================================================

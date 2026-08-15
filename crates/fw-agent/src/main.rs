@@ -123,12 +123,16 @@ async fn run_daemon() -> anyhow::Result<()> {
     let ca_cert = std::fs::read_to_string(format!("{}/ca.pem", cert_dir))
         .context("Failed to read CA certificate")?;
 
-    // Create the pull client
-    let manager_url = if cfg.pull.manager_check_in_url.is_empty() {
-        cfg.manager_url.clone()
-    } else {
-        cfg.pull.manager_check_in_url.clone()
-    };
+    // Create the pull client. `manager_agent_url` is the base URL of the
+    // manager's mTLS agent API (e.g. "https://mgr:8443"); the pull client
+    // appends the endpoint paths. It is always set by a successful enrollment,
+    // so an empty value means the config is stale — re-enroll rather than fall
+    // back to the human-UI `manager_url` (port 443), which does not mount the
+    // agent API and would 404 every check-in.
+    let manager_url = cfg.pull.manager_agent_url.clone();
+    if manager_url.is_empty() {
+        anyhow::bail!("manager_agent_url is not set in config — run 'fw-agent enroll' first");
+    }
     let pull_client =
         pull_client::PullClient::new(&manager_url, host_id, &client_cert, &client_key, &ca_cert)?;
 

@@ -191,11 +191,23 @@ impl FirewallBackend for UfwBackend {
         let mut failed = 0u32;
         let mut errors = Vec::new();
         for cmd in &compiled.commands {
-            let parts: Vec<&str> = cmd.split_whitespace().collect();
-            if parts.is_empty() {
-                continue;
-            }
-            let (ok, _, err) = run_cmd(parts[0], &parts[1..]);
+            // Shell-aware split: the compiled command embeds a single-quoted
+            // comment (`comment '...'`), which `split_whitespace` would leave
+            // as a literal `'foo'` arg (ufw rejects it as "Invalid syntax")
+            // and would shatter a spaced comment across several args. `shlex`
+            // understands the quoting and yields bare args, which go straight
+            // to `Command` — no shell, so no injection even from a malicious
+            // CIDR or comment.
+            let parts: Vec<String> = match shlex::split(cmd) {
+                Some(p) if !p.is_empty() => p,
+                _ => {
+                    failed += 1;
+                    errors.push(format!("{}: malformed command", cmd));
+                    continue;
+                }
+            };
+            let args: Vec<&str> = parts[1..].iter().map(|s| s.as_str()).collect();
+            let (ok, _, err) = run_cmd(&parts[0], &args);
             if ok {
                 applied += 1;
             } else {
@@ -296,8 +308,22 @@ fn compile_ufw_rule(rule: &FirewallRule) -> String {
         FirewallAction::Limit => cmd.push_str(" limit"),
         FirewallAction::Masquerade => cmd.push_str(" masquerade"),
     }
+    // Direction: `out` is explicit; `in` is ufw's default so we omit it.
     if rule.direction == FirewallDirection::Out {
         cmd.push_str(" out");
+    }
+    if rule.log {
+        cmd.push_str(" log");
+    }
+    // Interface binds the rule to a NIC. ufw wants `on <iface>` before the
+    // protocol/from/to clauses; pick the interface matching the direction.
+    let iface = if rule.direction == FirewallDirection::Out {
+        rule.interface_out.as_deref()
+    } else {
+        rule.interface_in.as_deref()
+    };
+    if let Some(iface) = iface {
+        cmd.push_str(&format!(" on {}", iface));
     }
     if rule.protocol != FirewallProtocol::Any {
         cmd.push_str(&format!(
@@ -305,30 +331,37 @@ fn compile_ufw_rule(rule: &FirewallRule) -> String {
             format!("{:?}", rule.protocol).to_lowercase()
         ));
     }
-    if let Some(src) = &rule.src_cidr {
-        cmd.push_str(&format!(" from {}", src));
+    // ufw requires a `from`/`to` pair — omitting them leaves a trailing
+    // `port` clause dangling and ufw rejects the whole rule with "Invalid
+    // syntax". Default absent CIDRs to `any`, and attach the port range to
+    // the matching side (`from ... port <src>` / `to ... port <dst>`).
+    let src = rule.src_cidr.as_deref().unwrap_or("any");
+    let dst = rule.dst_cidr.as_deref().unwrap_or("any");
+    cmd.push_str(&format!(" from {}", src));
+    if let Some(range) = port_range(rule.src_port_start, rule.src_port_end) {
+        cmd.push_str(&format!(" port {}", range));
     }
-    if let Some(dst) = &rule.dst_cidr {
-        cmd.push_str(&format!(" to {}", dst));
-    }
-    if let Some(port) = rule.dst_port_start {
-        if let Some(end) = rule.dst_port_end {
-            if port == end {
-                cmd.push_str(&format!(" port {}", port));
-            } else {
-                cmd.push_str(&format!(" port {}:{}", port, end));
-            }
-        } else {
-            cmd.push_str(&format!(" port {}", port));
-        }
-    }
-    if let Some(iface) = &rule.interface_in {
-        cmd.push_str(&format!(" on {}", iface));
+    cmd.push_str(&format!(" to {}", dst));
+    if let Some(range) = port_range(rule.dst_port_start, rule.dst_port_end) {
+        cmd.push_str(&format!(" port {}", range));
     }
     if !rule.comment.is_empty() {
         cmd.push_str(&format!(" comment '{}'", rule.comment.replace('\'', "")));
     }
     cmd
+}
+
+/// Format a port range as ufw's `port` value expects: a single port, or
+/// `start:end` for a range. Returns `None` when no port is configured. The
+/// `firewall_rules` CHECK constraint guarantees ports come as a (start, end)
+/// pair, but the model types are `Option` so all cases are handled here.
+fn port_range(start: Option<i32>, end: Option<i32>) -> Option<String> {
+    match (start, end) {
+        (Some(s), Some(e)) if s == e => Some(s.to_string()),
+        (Some(s), Some(e)) => Some(format!("{s}:{e}")),
+        (Some(s), None) => Some(s.to_string()),
+        _ => None,
+    }
 }
 
 // ============================================================
@@ -357,11 +390,18 @@ impl FirewallBackend for FirewalldBackend {
         let mut errors = Vec::new();
 
         for cmd in &compiled.commands {
-            let parts: Vec<&str> = cmd.split_whitespace().collect();
-            if parts.is_empty() {
-                continue;
-            }
-            let (ok, _, err) = run_cmd(parts[0], &parts[1..]);
+            // Shell-aware split (see UFW apply for rationale): respects the
+            // single-quoted comment and passes bare args to `Command`.
+            let parts: Vec<String> = match shlex::split(cmd) {
+                Some(p) if !p.is_empty() => p,
+                _ => {
+                    failed += 1;
+                    errors.push(format!("{}: malformed command", cmd));
+                    continue;
+                }
+            };
+            let args: Vec<&str> = parts[1..].iter().map(|s| s.as_str()).collect();
+            let (ok, _, err) = run_cmd(&parts[0], &args);
             if ok {
                 applied += 1;
             } else {
