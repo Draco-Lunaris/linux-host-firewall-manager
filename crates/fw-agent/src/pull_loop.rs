@@ -43,6 +43,22 @@ fn acquire_apply_lock() -> std::io::Result<std::fs::File> {
     }
 }
 
+/// SHA-256 of the running agent binary (current_exe), computed once per process
+/// and sent on each check-in for integrity tracking (SEC-007 stub). Returns
+/// None if the binary can't be read.
+fn agent_binary_hash() -> Option<String> {
+    static HASH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let exe = std::env::current_exe().ok()?;
+        let bytes = std::fs::read(&exe).ok()?;
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        Some(hex::encode(hasher.finalize()))
+    })
+    .clone()
+}
+
 /// Run the pull loop as a background task.
 pub async fn run_pull_loop(
     backend: Arc<dyn FirewallBackend>,
@@ -160,6 +176,7 @@ async fn run_pull_cycle(
         os_info,
         uptime_seconds: uptime,
         config_version: *config_version,
+        agent_binary_hash: agent_binary_hash(),
     };
 
     let safe_mode_enabled = config.read().await.safe_mode_enabled;
@@ -249,14 +266,32 @@ async fn run_pull_cycle(
         }
     }
 
-    // 6. Execute pending actions
+    // 6. Execute pending actions (skip replays — already-executed actions whose
+    // result report was likely lost; ack them without re-executing).
     for action in &response.pending_actions {
+        if crate::replay_cache::already_executed(&action.id.to_string()) {
+            tracing::info!(action_id = %action.id, "Pending action already executed — skipping replay");
+            let result_req = CheckInResultRequest {
+                host_id,
+                action_id: Some(action.id),
+                success: true,
+                error_message: None,
+                new_rules_hash: rules_hash.clone(),
+            };
+            if let Err(e) = pull_client.report_result(&result_req).await {
+                tracing::warn!(error = %e, "Failed to ack replayed action to manager");
+            }
+            continue;
+        }
         tracing::info!(
             action_id = %action.id,
             action_type = %action.action_type,
             "Executing pending action"
         );
         let (success, error_msg) = execute_pending_action(backend, action).await;
+        if success {
+            let _ = crate::replay_cache::record(&action.id.to_string());
+        }
 
         let result_req = CheckInResultRequest {
             host_id,

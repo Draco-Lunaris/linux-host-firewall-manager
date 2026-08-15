@@ -33,6 +33,11 @@ pub struct CheckInRequest {
     pub os_info: serde_json::Value,
     pub uptime_seconds: i64,
     pub config_version: i32,
+    /// SHA-256 of the agent binary (current_exe), sent on check-in for
+    /// integrity tracking (SEC-007 stub — real GPG verification is a follow-up;
+    /// the manager currently ignores this field).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_binary_hash: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -9,6 +9,7 @@ mod drift;
 mod enrollment;
 mod protected_cidrs;
 mod pull_loop;
+mod replay_cache;
 mod safe_mode;
 
 use clap::{Parser, Subcommand};
