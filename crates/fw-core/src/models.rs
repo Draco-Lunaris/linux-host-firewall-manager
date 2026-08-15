@@ -81,6 +81,7 @@ pub enum HostHealthStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "cert_status", rename_all = "lowercase")]
 pub enum CertStatus {
     Active,
