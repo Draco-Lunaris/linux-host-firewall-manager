@@ -54,8 +54,12 @@ pub async fn enroll(manager_url: &str, token: &str, fqdn: &str) -> Result<()> {
     println!("Generated CSR for {}", fqdn);
 
     // Step 3: Submit enrollment
+    // Disable keep-alive pooling so each poll uses a fresh connection — a pooled
+    // connection left idle for the 60s poll interval can go stale (server closes
+    // it), and reusing it hangs the request until the timeout.
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .pool_max_idle_per_host(0)
         .build()?;
 
     let submit_body = serde_json::json!({
