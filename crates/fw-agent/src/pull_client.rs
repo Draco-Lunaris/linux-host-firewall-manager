@@ -46,7 +46,6 @@ pub struct CheckInResponse {
     pub rules: Vec<RuleDto>,
     pub config: Option<ConfigUpdate>,
     pub pending_actions: Vec<PendingActionDto>,
-    pub agent_update: Option<AgentUpdateInfo>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,13 +81,6 @@ pub struct PendingActionDto {
     pub action_type: String,
     pub payload: serde_json::Value,
     pub reason: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AgentUpdateInfo {
-    pub latest_version: String,
-    pub download_url: String,
-    pub checksum: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

@@ -125,7 +125,6 @@ pub struct CheckInResponse {
     pub rules: Vec<RuleDto>,
     pub config: Option<ConfigUpdate>,
     pub pending_actions: Vec<PendingActionDto>,
-    pub agent_update: Option<AgentUpdateInfo>,
 }
 
 #[derive(Debug, Serialize)]
@@ -162,13 +161,6 @@ pub struct PendingActionDto {
     pub action_type: String,
     pub payload: serde_json::Value,
     pub reason: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct AgentUpdateInfo {
-    pub latest_version: String,
-    pub download_url: String,
-    pub checksum: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -310,15 +302,11 @@ async fn check_in(
             .map_err(fw_core::AppError::Database)?;
     }
 
-    // Agent update info (stub for now — will be wired to repo sync tables)
-    let agent_update = None;
-
     Ok(Json(CheckInResponse {
         rules_changed,
         rules: rules.into_iter().map(rule_to_dto).collect(),
         config,
         pending_actions,
-        agent_update,
     }))
 }
 

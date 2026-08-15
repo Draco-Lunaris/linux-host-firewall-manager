@@ -38,7 +38,6 @@ mod tests {
                 config_version: 2,
             }),
             pending_actions: vec![],
-            agent_update: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"rules_changed\":true"));

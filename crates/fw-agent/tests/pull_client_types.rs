@@ -56,8 +56,7 @@ mod tests {
                 "action_type": "safe_mode_on",
                 "payload": {},
                 "reason": "Emergency"
-            }],
-            "agent_update": null
+            }]
         }"#;
         let resp: CheckInResponse = serde_json::from_str(json).unwrap();
         assert!(resp.rules_changed);
@@ -68,7 +67,6 @@ mod tests {
         assert_eq!(resp.config.as_ref().unwrap().check_in_interval_secs, 300);
         assert_eq!(resp.pending_actions.len(), 1);
         assert_eq!(resp.pending_actions[0].action_type, "safe_mode_on");
-        assert!(resp.agent_update.is_none());
     }
 
     #[test]
@@ -91,8 +89,7 @@ mod tests {
             "rules_changed": false,
             "rules": [],
             "config": null,
-            "pending_actions": [],
-            "agent_update": null
+            "pending_actions": []
         }"#;
         let resp: CheckInResponse = serde_json::from_str(json).unwrap();
         assert!(!resp.rules_changed);
@@ -127,18 +124,5 @@ mod tests {
         assert_eq!(rule.interface_in, Some("eth0".to_string()));
         assert_eq!(rule.priority, 50);
         assert!(rule.log);
-    }
-
-    #[test]
-    fn test_agent_update_info_deserialization() {
-        let json = r#"{
-            "latest_version": "0.3.0",
-            "download_url": "https://manager/repo/agent-0.3.0.deb",
-            "checksum": "sha256:abc123"
-        }"#;
-        let info: AgentUpdateInfo = serde_json::from_str(json).unwrap();
-        assert_eq!(info.latest_version, "0.3.0");
-        assert!(info.download_url.contains("agent-0.3.0.deb"));
-        assert!(info.checksum.is_some());
     }
 }
