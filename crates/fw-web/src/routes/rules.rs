@@ -17,6 +17,7 @@ use crate::AppState;
 pub fn router() -> Router<std::sync::Arc<AppState>> {
     Router::new()
         .route("/", get(list_rules).post(create_rule))
+        .route("/flagged", get(list_flagged_rules))
         .route("/{id}", get(get_rule).put(update_rule).delete(delete_rule))
         .route("/{id}/validate", post(validate_rule))
 }
@@ -37,6 +38,23 @@ async fn list_rules(
             .await?;
     let total = rules.len() as i64;
     Ok(Json(RuleListResponse { rules, total }))
+}
+
+/// `GET /rules/flagged` — rules that require admin approval (broad allows),
+/// for the RulesPage "Flagged" filter (SEC-003).
+async fn list_flagged_rules(
+    State(state): State<std::sync::Arc<AppState>>,
+    _auth: AuthUser,
+) -> Result<Json<Vec<FirewallRule>>, fw_core::AppError> {
+    let rules: Vec<FirewallRule> =
+        sqlx::query_as("SELECT * FROM firewall_rules ORDER BY priority, name")
+            .fetch_all(&state.db)
+            .await?;
+    let flagged: Vec<FirewallRule> = rules
+        .into_iter()
+        .filter(|r| fw_core::policy::check_rule(r).requires_approval)
+        .collect();
+    Ok(Json(flagged))
 }
 
 #[derive(Debug, Deserialize)]

@@ -14,24 +14,28 @@ const PROTOCOLS = ["any", "tcp", "udp", "icmp", "icmpv6", "gre", "esp", "ah", "s
 
 export default function RulesPage() {
   const [rules, setRules] = useState<FirewallRule[]>([])
-  
+  const [flaggedOnly, setFlaggedOnly] = useState(false)
+
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingRule, setEditingRule] = useState<FirewallRule | null>(null)
   const [validationResults, setValidationResults] = useState<Record<string, ValidateRuleResponse>>({})
   const [error, setError] = useState<string | null>(null)
 
   const loadRules = async () => {
-    
     try {
-      const resp = await rulesApi.list()
-      setRules(resp.data.rules)
+      if (flaggedOnly) {
+        const resp = await rulesApi.listFlagged()
+        setRules(resp.data)
+      } else {
+        const resp = await rulesApi.list()
+        setRules(resp.data.rules)
+      }
     } catch (e: unknown) {
       setError((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Failed to load rules")
     }
-    
   }
 
-  useEffect(() => { loadRules() }, [])
+  useEffect(() => { loadRules() }, [flaggedOnly]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleValidate = async (rule: FirewallRule) => {
     try {
@@ -62,9 +66,14 @@ export default function RulesPage() {
     <Box>
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
         <Typography variant="h4">Firewall Rules</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => { setEditingRule(null); setDialogOpen(true) }}>
-          Create Rule
-        </Button>
+        <Box sx={{ display: "flex", gap: 1 }}>
+          <Button variant={flaggedOnly ? "contained" : "outlined"} color="warning" size="small" onClick={() => setFlaggedOnly(f => !f)}>
+            {flaggedOnly ? "Showing Flagged" : "Flagged Only"}
+          </Button>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => { setEditingRule(null); setDialogOpen(true) }}>
+            Create Rule
+          </Button>
+        </Box>
       </Box>
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
       <TableContainer component={Paper}>

@@ -306,6 +306,25 @@ async fn assign_policy_set(
             "Write access required".to_string(),
         ));
     }
+
+    // SEC-003: a non-admin may not assign a policy set containing flagged
+    // (broad-allow) rules — those require admin approval.
+    if !auth.role.is_admin() {
+        let flagged = fw_core::policy::flagged_rule_ids_for_set(&state.db, req.policy_set_id)
+            .await
+            .map_err(fw_core::AppError::Database)?;
+        if !flagged.is_empty() {
+            return Err(fw_core::AppError::Conflict(format!(
+                "Policy set contains flagged rules requiring admin approval: {}",
+                flagged
+                    .iter()
+                    .map(|u| u.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+    }
+
     sqlx::query(
         "INSERT INTO host_policy_assignments (host_id, policy_set_id, assigned_by) VALUES ($1, $2, $3) ON CONFLICT (host_id, policy_set_id) DO NOTHING",
     )

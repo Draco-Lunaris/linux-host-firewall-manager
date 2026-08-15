@@ -68,6 +68,24 @@ async fn assign_policy_set(
         ));
     }
 
+    // SEC-003: a non-admin may not assign a policy set containing flagged
+    // (broad-allow) rules — those require admin approval.
+    if !auth.role.is_admin() {
+        let flagged = fw_core::policy::flagged_rule_ids_for_set(&state.db, req.policy_set_id)
+            .await
+            .map_err(fw_core::AppError::Database)?;
+        if !flagged.is_empty() {
+            return Err(fw_core::AppError::Conflict(format!(
+                "Policy set contains flagged rules requiring admin approval: {}",
+                flagged
+                    .iter()
+                    .map(|u| u.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+    }
+
     let host_ids = resolve_host_ids(&state.db, &req.host_ids, &req.group_ids).await?;
     if host_ids.is_empty() {
         return Err(fw_core::AppError::BadRequest(

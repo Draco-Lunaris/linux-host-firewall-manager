@@ -413,6 +413,8 @@ export interface ValidateRuleResponse {
 
 export const rulesApi = {
   list: () => apiClient.get<{ rules: FirewallRule[]; total: number }>("/rules"),
+  /** GET /rules/flagged — rules requiring admin approval (broad allows, SEC-003). */
+  listFlagged: () => apiClient.get<FirewallRule[]>("/rules/flagged"),
   get: (id: string) => apiClient.get<FirewallRule>(`/rules/${id}`),
   create: (data: CreateRuleRequest) => apiClient.post<FirewallRule>("/rules", data),
   update: (id: string, data: Partial<CreateRuleRequest>) => apiClient.put<FirewallRule>(`/rules/${id}`, data),
