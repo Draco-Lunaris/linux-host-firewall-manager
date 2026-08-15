@@ -227,6 +227,13 @@ async fn run_pull_cycle(
             version = *config_version,
             "Config updated from manager"
         );
+        // Persist to disk so a daemon restart starts from the latest config
+        // rather than the stale enrollment value (which would re-fetch on the
+        // first check-in — harmless, but the on-disk config should reflect
+        // what the agent is actually running).
+        if let Err(e) = config.read().await.save() {
+            tracing::warn!(error = %e, "Failed to persist config update to disk");
+        }
     }
 
     // 5. Apply new rules if changed

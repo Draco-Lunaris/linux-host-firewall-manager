@@ -14,6 +14,8 @@ use uuid::Uuid;
 
 use crate::AppState;
 
+use super::settings::global_check_in_interval;
+
 pub fn router() -> Router<std::sync::Arc<AppState>> {
     Router::new()
         .route("/enroll", post(submit_enrollment))
@@ -245,11 +247,17 @@ async fn approve_enrollment(
     .await?;
 
     // Create default host config overrides for the pull model
+    // Seed this host's config overrides from the fleet-wide polling interval
+    // (set via the manager Settings UI). Using the global value here — not a
+    // hardcoded 900 — means a newly-enrolled host starts on the global
+    // interval instead of waiting for the next Settings save to propagate.
+    let check_in_interval = global_check_in_interval(&state.db).await;
     let _ = sqlx::query(
         "INSERT INTO host_config_overrides (host_id, check_in_interval_secs, push_enabled, safe_mode_enabled, config_version)
-         VALUES ($1, 900, TRUE, FALSE, 1) ON CONFLICT (host_id) DO NOTHING",
+         VALUES ($1, $2, TRUE, FALSE, 1) ON CONFLICT (host_id) DO NOTHING",
     )
     .bind(host_id)
+    .bind(check_in_interval)
     .execute(&state.db)
     .await;
 
@@ -284,7 +292,7 @@ async fn approve_enrollment(
         server_cert: signed.cert_pem,
         crl_pem: signed.crl_pem,
         pull_config: Some(fw_core::models::PullConfigBundle {
-            check_in_interval_secs: 900,
+            check_in_interval_secs: check_in_interval,
             push_enabled: true,
             config_version: 1,
             manager_agent_url,

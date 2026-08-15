@@ -50,6 +50,19 @@ async fn set_config(
     Ok(())
 }
 
+/// The fleet-wide check-in interval (seconds), set via the Settings UI and
+/// stored in `system_config` under `settings_polling.check_in_interval_secs`.
+/// Defaults to 900s. Used at enrollment so newly-enrolled hosts start on the
+/// global interval rather than a hardcoded default; existing hosts are
+/// pushed the value when it changes (see `update_settings`).
+pub(crate) async fn global_check_in_interval(db: &sqlx::PgPool) -> i32 {
+    get_config_json(db, "settings_polling")
+        .await
+        .and_then(|v| v.get("check_in_interval_secs").and_then(|n| n.as_i64()))
+        .map(|n| n.clamp(1, 86_400) as i32)
+        .unwrap_or(900)
+}
+
 async fn get_settings(
     State(state): State<std::sync::Arc<AppState>>,
     _auth: AuthUser,
@@ -128,6 +141,27 @@ async fn update_settings(
     }
     if let Some(v) = &req.polling {
         set_config(&state.db, "settings_polling", v).await?;
+        // Propagate the global check-in interval to every host so enrolled
+        // agents pick it up on their next poll. The check-in handler reads
+        // `check_in_interval_secs` from `host_config_overrides` (per-host) and
+        // only sends a config update when `config_version` increases — so bump
+        // the version on the rows whose interval actually changes. Rows
+        // already at the new value are left alone (no needless re-push).
+        if let Some(interval) = v
+            .get("check_in_interval_secs")
+            .and_then(|n| n.as_i64())
+            .map(|n| n.clamp(1, 86_400) as i32)
+        {
+            sqlx::query(
+                "UPDATE host_config_overrides
+                 SET check_in_interval_secs = $1, config_version = config_version + 1
+                 WHERE check_in_interval_secs IS DISTINCT FROM $1",
+            )
+            .bind(interval)
+            .execute(&state.db)
+            .await
+            .map_err(fw_core::AppError::Database)?;
+        }
     }
     if let Some(v) = &req.web_tls_strategy {
         set_config(
