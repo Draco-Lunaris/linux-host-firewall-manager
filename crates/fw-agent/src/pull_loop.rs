@@ -58,6 +58,8 @@ pub async fn run_pull_loop(
         .unwrap_or_default();
     let mut interval_secs = config.read().await.pull.check_in_interval_secs;
     let mut config_version = config.read().await.pull.config_version;
+    let safe_mode =
+        crate::safe_mode::SafeModeState::new(config.read().await.safe_mode_timeout_secs);
 
     loop {
         tracing::info!(host_id = %host_id, interval = interval_secs, "Pull cycle starting");
@@ -66,6 +68,7 @@ pub async fn run_pull_loop(
             &backend,
             &config,
             &pull_client,
+            &safe_mode,
             host_id,
             &mut interval_secs,
             &mut config_version,
@@ -113,6 +116,7 @@ async fn run_pull_cycle(
     backend: &Arc<dyn FirewallBackend>,
     config: &Arc<RwLock<AgentConfig>>,
     pull_client: &PullClient,
+    safe_mode: &crate::safe_mode::SafeModeState,
     host_id: uuid::Uuid,
     interval_secs: &mut u32,
     config_version: &mut i32,
@@ -158,7 +162,36 @@ async fn run_pull_cycle(
         config_version: *config_version,
     };
 
-    let response = pull_client.check_in(&req).await?;
+    let safe_mode_enabled = config.read().await.safe_mode_enabled;
+
+    // 3. Call check-in. On success, record manager contact for safe mode. On
+    // failure, if safe mode is enabled and the unreachable timeout has elapsed,
+    // revert to the last-known-good ruleset rather than leaving the host running
+    // a stale/unmanaged ruleset.
+    let response = match pull_client.check_in(&req).await {
+        Ok(r) => {
+            safe_mode.record_manager_contact();
+            r
+        }
+        Err(e) => {
+            if safe_mode_enabled && safe_mode.check() {
+                tracing::warn!(error = %e, "Manager unreachable; safe mode active — reverting to last-known-good");
+                if let Ok(last_good) = crate::safe_mode::load_last_good() {
+                    if !last_good.is_empty() {
+                        let protected_cidrs = config.read().await.protected_cidrs.clone();
+                        if let Err(revert_err) =
+                            apply_rules(backend, &last_good, &protected_cidrs).await
+                        {
+                            tracing::error!(error = %revert_err, "Safe-mode revert apply failed");
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!(error = %e, "Check-in failed");
+            }
+            return Ok(false);
+        }
+    };
 
     // 4. Apply config updates if present
     if let Some(ref cfg_update) = response.config {
@@ -250,10 +283,20 @@ async fn apply_rules_from_dto(
     protected_cidrs: &[String],
 ) -> Result<String> {
     let rules: Vec<FirewallRule> = dtos.iter().map(dto_to_rule).collect();
+    apply_rules(backend, &rules, protected_cidrs).await
+}
 
+/// Compile and apply a ruleset under the per-host apply mutex, after enforcing
+/// protected CIDRs. Returns the new snapshot hash. Shared by the normal apply
+/// path and the safe-mode revert (which already has FirewallRules, not DTOs).
+async fn apply_rules(
+    backend: &Arc<dyn FirewallBackend>,
+    rules: &[FirewallRule],
+    protected_cidrs: &[String],
+) -> Result<String> {
     // Enforce protected CIDRs before compiling/applying.
     if let Err(violations) =
-        crate::protected_cidrs::check_rules_against_protected(&rules, protected_cidrs)
+        crate::protected_cidrs::check_rules_against_protected(rules, protected_cidrs)
     {
         anyhow::bail!("protected CIDR violations: {}", violations.join("; "));
     }
@@ -266,13 +309,11 @@ async fn apply_rules_from_dto(
         .map_err(|e| anyhow::anyhow!("apply lock task: {}", e))?
         .map_err(|e| anyhow::anyhow!("acquire apply lock: {}", e))?;
 
-    // Compile the rules
     let compiled = backend
-        .compile(&rules)
+        .compile(rules)
         .await
         .map_err(|e| anyhow::anyhow!("Compile failed: {}", e))?;
 
-    // Apply the compiled rules
     let result = backend
         .apply(&compiled)
         .await
@@ -281,6 +322,9 @@ async fn apply_rules_from_dto(
     if result.failed > 0 {
         anyhow::bail!("{} rules failed to apply", result.failed);
     }
+
+    // Persist this ruleset as the last-known-good for safe-mode revert (S6.2).
+    let _ = crate::safe_mode::save_last_good(rules);
 
     Ok(result.snapshot_hash)
 }
