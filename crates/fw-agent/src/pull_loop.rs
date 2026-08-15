@@ -138,7 +138,8 @@ async fn run_pull_cycle(
             rule_count = response.rules.len(),
             "Rules changed, applying new ruleset"
         );
-        match apply_rules_from_dto(backend, &response.rules).await {
+        let protected_cidrs = config.read().await.protected_cidrs.clone();
+        match apply_rules_from_dto(backend, &response.rules, &protected_cidrs).await {
             Ok(new_hash) => {
                 let result_req = CheckInResultRequest {
                     host_id,
@@ -192,11 +193,22 @@ async fn run_pull_cycle(
 }
 
 /// Convert RuleDto list to FirewallRule list, compile, and apply via backend.
+/// Rules are first checked against the host's protected CIDRs (SEC-006): a
+/// rule that would block a protected CIDR, or expose one to a broad source, is
+/// rejected before it reaches the backend.
 async fn apply_rules_from_dto(
     backend: &Arc<dyn FirewallBackend>,
     dtos: &[RuleDto],
+    protected_cidrs: &[String],
 ) -> Result<String> {
     let rules: Vec<FirewallRule> = dtos.iter().map(dto_to_rule).collect();
+
+    // Enforce protected CIDRs before compiling/applying.
+    if let Err(violations) =
+        crate::protected_cidrs::check_rules_against_protected(&rules, protected_cidrs)
+    {
+        anyhow::bail!("protected CIDR violations: {}", violations.join("; "));
+    }
 
     // Compile the rules
     let compiled = backend

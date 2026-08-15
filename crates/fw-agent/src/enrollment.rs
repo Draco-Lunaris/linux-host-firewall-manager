@@ -237,9 +237,16 @@ fn write_pki_bundle(bundle: &PkiBundle, server_key_pem: &str) -> Result<()> {
 }
 
 fn save_config(manager_url: &str, fqdn: &str) -> Result<()> {
+    // Seed the manager's IP as a protected CIDR so the agent never accepts a
+    // rule that would block or expose the management interface (SEC-006).
+    let protected_cidrs = crate::protected_cidrs::auto_detect_manager_cidr(manager_url)
+        .map(|ip| vec![format!("{}/32", ip)])
+        .unwrap_or_default();
+
     let config = crate::config::AgentConfig {
         manager_url: manager_url.to_string(),
         fqdn: fqdn.to_string(),
+        protected_cidrs,
         ..Default::default()
     };
     config.save().context("Failed to save agent config")?;
