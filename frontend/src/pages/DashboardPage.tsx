@@ -225,7 +225,7 @@ export default function DashboardPage() {
             </Grid>
             <Grid size={{ xs: 12, sm: 6, md: 3 }}>
               <StatCard
-                title="Hosts in Drift (24h)"
+                title="Hosts in Drift"
                 value={status.hosts_in_drift}
                 color={status.hosts_in_drift > 0 ? '#ed6c02' : '#2e7d32'}
                 icon={<Warning sx={{ color: status.hosts_in_drift > 0 ? '#ed6c02' : '#2e7d32' }} />}

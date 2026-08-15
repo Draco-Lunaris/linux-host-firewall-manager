@@ -175,6 +175,26 @@ export const checkInsApi = {
   list: (hostId: string) => apiClient.get<CheckIn[]>(`/hosts/${hostId}/check-ins`),
 }
 
+// ── Drift history API (audit log of firewall-rule drift) ──────────────────────
+export interface DriftSnapshot {
+  id: string
+  host_id: string
+  fqdn: string
+  display_name: string
+  snapshot_hash: string
+  rule_count: number
+  /** 'check_in_mismatch' = live rules diverged from policy (a drift event);
+   *  'agent_report' = the agent applied a ruleset (often the correction). */
+  source: string
+  captured_at: string
+}
+
+export const driftApi = {
+  /** GET /drift/snapshots[?host_id=&limit=] — fleet-wide drift history, newest first. */
+  list: (params?: { host_id?: string; limit?: number }) =>
+    apiClient.get<DriftSnapshot[]>('/drift/snapshots', { params }),
+}
+
 // ── Certificates API (M8) ────────────────────────────────────────────────────
 export const certsApi = {
   // List all certs, optional filters

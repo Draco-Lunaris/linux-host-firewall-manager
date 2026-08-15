@@ -3,6 +3,7 @@ pub mod auth;
 pub mod ca;
 pub mod certificates;
 pub mod deployment;
+pub mod drift;
 pub mod enrollment;
 pub mod groups;
 pub mod health;

@@ -18,6 +18,7 @@ import ProfilePage from './pages/ProfilePage'
 import RulesPage from './pages/RulesPage'
 import PolicySetsPage from './pages/PolicySetsPage'
 import DeploymentPage from './pages/DeploymentPage'
+import DriftLogPage from './pages/DriftLogPage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
@@ -103,6 +104,7 @@ function App() {
             <Route path="/rules" element={<RulesPage />} />
             <Route path="/policy-sets" element={<PolicySetsPage />} />
             <Route path="/deployment" element={<DeploymentPage />} />
+            <Route path="/drift" element={<DriftLogPage />} />
             <Route path="/certificates" element={<CertificatesPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/profile" element={<ProfilePage />} />

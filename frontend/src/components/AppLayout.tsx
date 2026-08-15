@@ -18,6 +18,7 @@ import {
   Person as PersonIcon,
   Security as RulesIcon,
   Category as PolicySetIcon,
+  History as DriftIcon,
 } from '@mui/icons-material'
 import { useAuthStore } from '../store/authStore'
 
@@ -46,6 +47,7 @@ const navGroups: { heading: string; items: NavItem[] }[] = [
       { label: 'Rules', path: '/rules', icon: <RulesIcon />, writeOnly: true },
       { label: 'Policy Sets', path: '/policy-sets', icon: <PolicySetIcon />, writeOnly: true },
       { label: 'Deploy', path: '/deployment', icon: <DeployIcon />, writeOnly: true },
+      { label: 'Drift Log', path: '/drift', icon: <DriftIcon /> },
     ],
   },
   {

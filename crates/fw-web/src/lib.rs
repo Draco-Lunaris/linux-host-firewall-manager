@@ -160,6 +160,7 @@ pub fn build_router(state: AppState) -> Router<()> {
         .nest("/deployment", routes::deployment::router())
         .nest("/ca", routes::ca::router())
         .nest("/certificates", routes::certificates::router())
+        .nest("/drift", routes::drift::router())
         .nest("/settings", routes::settings::router())
         .nest("/admin", routes::enrollment::admin_router())
         .layer(GovernorLayer::new(api_governor))

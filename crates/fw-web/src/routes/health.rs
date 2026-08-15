@@ -54,11 +54,18 @@ pub async fn fleet_status_handler(State(state): State<Arc<AppState>>) -> Json<se
         .await
         .unwrap_or(0);
 
-    // Hosts that reported a rules-hash mismatch on check-in in the last day —
-    // i.e. their live firewall rules drifted from the assigned policy set.
+    // Hosts currently in drift: whose most recent drift_snapshot is a
+    // check-in mismatch (drifted) with no subsequent agent_report (apply /
+    // correction) after it. Unlike a rolling 24h "ever drifted" count, this
+    // drops to 0 the moment an agent self-corrects — it reflects current
+    // state, not history. The full drift history lives in `drift_snapshots`
+    // (surfaced via GET /api/v1/drift/snapshots) for investigating
+    // unauthorized changes.
     let hosts_in_drift: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT host_id) FROM drift_snapshots \
-         WHERE source = 'check_in_mismatch' AND captured_at > NOW() - INTERVAL '24 hours'",
+        "SELECT count(*) FROM ( \
+            SELECT DISTINCT ON (host_id) host_id, source \
+            FROM drift_snapshots ORDER BY host_id, captured_at DESC, id DESC \
+         ) latest WHERE latest.source = 'check_in_mismatch'",
     )
     .fetch_one(&state.db)
     .await
