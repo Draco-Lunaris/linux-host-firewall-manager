@@ -15,7 +15,7 @@ import DashboardPage from './pages/DashboardPage'
 import CertificatesPage from './pages/CertificatesPage'
 import SettingsPage from './pages/SettingsPage'
 import ProfilePage from './pages/ProfilePage'
-import RulesPage from './pages/RulesPage'
+import RuleGroupsPage from './pages/RuleGroupsPage'
 import PolicySetsPage from './pages/PolicySetsPage'
 import DeploymentPage from './pages/DeploymentPage'
 import DriftLogPage from './pages/DriftLogPage'
@@ -101,7 +101,7 @@ function App() {
             <Route path="/hosts/:id" element={<HostDetailPage />} />
             <Route path="/groups" element={<GroupsPage />} />
             <Route path="/users" element={<UsersPage />} />
-            <Route path="/rules" element={<RulesPage />} />
+            <Route path="/rule-groups" element={<RuleGroupsPage />} />
             <Route path="/policy-sets" element={<PolicySetsPage />} />
             <Route path="/deployment" element={<DeploymentPage />} />
             <Route path="/drift" element={<DriftLogPage />} />

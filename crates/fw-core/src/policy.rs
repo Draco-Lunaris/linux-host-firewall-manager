@@ -1,4 +1,4 @@
-use crate::models::{FirewallAction, FirewallRule};
+use crate::models::{FirewallAction, FirewallRule, FIREWALL_RULE_COLS_R};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -44,20 +44,37 @@ pub fn check_policy_set_for_flagged(rules: &[FirewallRule]) -> Vec<Uuid> {
         .collect()
 }
 
-/// Fetch a policy set's rules from the DB and return the IDs of the flagged
-/// ones. Shared by the assignment gates in hosts.rs and deployment.rs.
+/// Fetch the compiled, ordered rule list for a policy set — the flattened
+/// view the agent applies. Rules are gathered from the set's included rule
+/// groups (in `set_group_order`), each group's rules in `group_order`, then by
+/// `priority`. This is the single source of truth for the compiled policy: the
+/// agent `GET /policy` + check-in paths, the policy-set preview, the deployment
+/// preview, and the SEC-003 flagged-rule gate all use it.
+pub async fn rules_for_policy_set(
+    db: &sqlx::PgPool,
+    policy_set_id: Uuid,
+) -> Result<Vec<FirewallRule>, sqlx::Error> {
+    let rules: Vec<FirewallRule> = sqlx::query_as(&format!(
+        "SELECT {FIREWALL_RULE_COLS_R} FROM firewall_policy_set_rule_groups psrg
+         JOIN firewall_rules r ON r.rule_group_id = psrg.rule_group_id
+         WHERE psrg.policy_set_id = $1
+         ORDER BY psrg.set_group_order, r.group_order, r.priority"
+    ))
+    .bind(policy_set_id)
+    .fetch_all(db)
+    .await?;
+    Ok(rules)
+}
+
+/// Fetch a policy set's compiled rules from the DB and return the IDs of the
+/// flagged ones (broad-allow rules requiring admin approval). Shared by the
+/// assignment gates in hosts.rs and deployment.rs. A flagged rule in a shared
+/// group correctly flags every set that includes that group.
 pub async fn flagged_rule_ids_for_set(
     db: &sqlx::PgPool,
     policy_set_id: Uuid,
 ) -> Result<Vec<Uuid>, sqlx::Error> {
-    let rules: Vec<FirewallRule> = sqlx::query_as(
-        "SELECT r.* FROM firewall_rules r
-         JOIN firewall_policy_set_rules psr ON psr.rule_id = r.id
-         WHERE psr.policy_set_id = $1",
-    )
-    .bind(policy_set_id)
-    .fetch_all(db)
-    .await?;
+    let rules = rules_for_policy_set(db, policy_set_id).await?;
     Ok(check_policy_set_for_flagged(&rules))
 }
 

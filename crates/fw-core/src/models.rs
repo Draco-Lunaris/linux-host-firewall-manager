@@ -9,6 +9,7 @@ use uuid::Uuid;
 // ============================================================
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "firewall_action", rename_all = "lowercase")]
 pub enum FirewallAction {
     Allow,
@@ -31,6 +32,7 @@ impl FirewallAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "firewall_direction", rename_all = "lowercase")]
 pub enum FirewallDirection {
     In,
@@ -49,6 +51,7 @@ impl FirewallDirection {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "firewall_protocol", rename_all = "lowercase")]
 pub enum FirewallProtocol {
     Any,
@@ -314,11 +317,27 @@ pub struct FirewallPolicySet {
     pub updated_at: DateTime<Utc>,
 }
 
+/// A reusable, ordered collection of rules — the middle tier of the containment
+/// model. A rule belongs to exactly one group (1:1); a policy set collects an
+/// ordered list of groups. Editing a rule in a group propagates to every policy
+/// set that includes the group.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct FirewallPolicySetRule {
+pub struct FirewallRuleGroup {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub created_by: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Membership of a rule group in a policy set, with the group's position in the
+/// set's apply order. M:N (groups <-> sets).
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct FirewallPolicySetRuleGroup {
     pub policy_set_id: Uuid,
-    pub rule_id: Uuid,
-    pub rule_order: i32,
+    pub rule_group_id: Uuid,
+    pub set_group_order: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

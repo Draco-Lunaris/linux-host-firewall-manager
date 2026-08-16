@@ -490,10 +490,10 @@ async fn fetch_rules_for_policy_set(
                 r.src_cidr::text, r.src_port_start, r.src_port_end,
                 r.dst_cidr::text, r.dst_port_start, r.dst_port_end,
                 r.interface_in, r.interface_out, r.priority, r.log
-         FROM firewall_policy_set_rules psr
-         JOIN firewall_rules r ON r.id = psr.rule_id
-         WHERE psr.policy_set_id = $1
-         ORDER BY psr.rule_order, r.priority",
+         FROM firewall_policy_set_rule_groups psrg
+         JOIN firewall_rules r ON r.rule_group_id = psrg.rule_group_id
+         WHERE psrg.policy_set_id = $1
+         ORDER BY psrg.set_group_order, r.group_order, r.priority",
     )
     .bind(policy_set_id)
     .fetch_all(db)

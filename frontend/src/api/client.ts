@@ -436,10 +436,47 @@ export const rulesApi = {
   /** GET /rules/flagged — rules requiring admin approval (broad allows, SEC-003). */
   listFlagged: () => apiClient.get<FirewallRule[]>("/rules/flagged"),
   get: (id: string) => apiClient.get<FirewallRule>(`/rules/${id}`),
-  create: (data: CreateRuleRequest) => apiClient.post<FirewallRule>("/rules", data),
+  // Rule creation is group-scoped: use ruleGroupsApi.createRule(groupId, body).
   update: (id: string, data: Partial<CreateRuleRequest>) => apiClient.put<FirewallRule>(`/rules/${id}`, data),
   delete: (id: string) => apiClient.delete(`/rules/${id}`),
   validate: (id: string) => apiClient.post<ValidateRuleResponse>(`/rules/${id}/validate`),
+}
+
+// ── Firewall Rule Groups API ──────────────────────────────────────────────────
+// A rule group is a reusable, ordered collection of rules. Rules belong to
+// exactly one group (created within it); a policy set collects an ordered list
+// of groups. Editing a rule in a group propagates to every set that includes it.
+export interface FirewallRuleGroup {
+  id: string
+  name: string
+  description: string
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  rule_count: number
+  used_by_count: number
+}
+
+/** A rule group as it appears within a policy set (with apply order + rule count). */
+export interface PolicySetRuleGroup {
+  rule_group_id: string
+  name: string
+  description: string
+  set_group_order: number
+  rule_count: number
+}
+
+export const ruleGroupsApi = {
+  list: () => apiClient.get<{ rule_groups: FirewallRuleGroup[]; total: number }>("/rule-groups"),
+  get: (id: string) => apiClient.get<FirewallRuleGroup>(`/rule-groups/${id}`),
+  create: (data: { name: string; description?: string }) => apiClient.post<FirewallRuleGroup>("/rule-groups", data),
+  update: (id: string, data: { name?: string; description?: string }) => apiClient.put<FirewallRuleGroup>(`/rule-groups/${id}`, data),
+  delete: (id: string) => apiClient.delete(`/rule-groups/${id}`),
+  listRules: (id: string) => apiClient.get<{ rules: FirewallRule[] }>(`/rule-groups/${id}/rules`),
+  /** POST /rule-groups/{id}/rules — create a rule within the group (appended if no group_order). */
+  createRule: (id: string, data: CreateRuleRequest) => apiClient.post<FirewallRule>(`/rule-groups/${id}/rules`, data),
+  /** PUT /rule-groups/{id}/rules/reorder — rewrite group_order to match the given order. */
+  reorder: (id: string, ruleIds: string[]) => apiClient.put(`/rule-groups/${id}/rules/reorder`, { rule_ids: ruleIds }),
 }
 
 // ── Firewall Policy Sets API ───────────────────────────────────────────────
@@ -465,10 +502,15 @@ export const policySetsApi = {
   update: (id: string, data: { name?: string; description?: string }) => apiClient.put<FirewallPolicySet>(`/policy-sets/${id}`, data),
   delete: (id: string) => apiClient.delete(`/policy-sets/${id}`),
   listRules: (id: string) => apiClient.get<{ rules: FirewallRule[] }>(`/policy-sets/${id}/rules`),
-  addRule: (id: string, ruleId: string, order?: number) => apiClient.post(`/policy-sets/${id}/rules`, { rule_id: ruleId, rule_order: order }),
-  removeRule: (id: string, ruleId: string) => apiClient.delete(`/policy-sets/${id}/rules/${ruleId}`),
-  /** PUT /policy-sets/{id}/rules/reorder — rewrite rule_order to match the given order. */
-  reorder: (id: string, ruleIds: string[]) => apiClient.put(`/policy-sets/${id}/rules/reorder`, { rule_ids: ruleIds }),
+  /** GET /policy-sets/{id}/rule-groups — the rule groups in the set, in apply order. */
+  listGroups: (id: string) => apiClient.get<{ rule_groups: PolicySetRuleGroup[] }>(`/policy-sets/${id}/rule-groups`),
+  /** POST /policy-sets/{id}/rule-groups — include a rule group (appended if no order). */
+  addGroup: (id: string, ruleGroupId: string, order?: number) =>
+    apiClient.post(`/policy-sets/${id}/rule-groups`, { rule_group_id: ruleGroupId, set_group_order: order }),
+  removeGroup: (id: string, ruleGroupId: string) => apiClient.delete(`/policy-sets/${id}/rule-groups/${ruleGroupId}`),
+  /** PUT /policy-sets/{id}/rule-groups/reorder — rewrite set_group_order to match the given order. */
+  reorderGroups: (id: string, ruleGroupIds: string[]) =>
+    apiClient.put(`/policy-sets/${id}/rule-groups/reorder`, { rule_group_ids: ruleGroupIds }),
   preview: (id: string) => apiClient.post<PreviewCompilationResponse>(`/policy-sets/${id}/preview`),
 }
 
