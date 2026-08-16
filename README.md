@@ -6,16 +6,19 @@
 
 Linux Host Firewall Manager provides a web-based management plane for controlling firewall rules across a fleet of Linux servers and workstations. It communicates with managed hosts through a Rust agent over mTLS-secured REST endpoints, with support for UFW (Debian/Ubuntu) and firewalld (RHEL/Fedora/Alma) backends.
 
+Rules are organized into reusable **rule groups**, which are assembled into **policy sets** that are assigned to hosts — so a change to a rule group propagates to every policy set (and host) that includes it.
+
 ## Key Features
 
-- **Centralized Dashboard** — Monitor firewall status, drift, and compliance across all hosts
-- **Multi-Backend Support** — UFW and firewalld (nftables + iptables planned for v0.2)
+- **Centralized Dashboard** — Monitor firewall status and drift across all hosts
+- **Rule Groups** — Reusable, ordered bundles of rules; edit a group once and it propagates to every policy set that includes it
+- **Policy Sets** — Ordered collections of rule groups, assigned to hosts or groups
+- **Multi-Backend Support** — UFW (Debian/Ubuntu) and firewalld (RHEL/Fedora/Alma); nftables + iptables planned
 - **Structured Rule Model** — Typed, validated firewall rules (no shell scripts, no injection surface)
-- **Policy Sets** — Named bundles of rules assigned to hosts or groups
-- **Drift Detection** — Agent reports rule snapshots; manager detects and alerts on drift
-- **Secure by Design** — mTLS with internal CA, HS256 (HMAC-SHA256) JWT, Argon2id, TOTP MFA, hash-chained audit log
+- **Drift Detection** — The manager compares the agent's applied-policy hash to the assigned policy; the agent self-heals out-of-band changes
+- **Agent Pull Model** — Agents check in on a configurable interval (default 15 min) and pull their assigned policy; the manager never initiates contact (an operator can nudge an early check-in via a long-lived SSE signal)
+- **Secure by Design** — mTLS with an internal CA, EdDSA (Ed25519) JWTs, Argon2id passwords, TOTP MFA, hash-chained audit log
 - **Self-Enrollment** — CSR-based enrollment with one-time tokens and admin approval
-- **Hybrid Push/Pull** — Agents pull rules on a configurable interval (default 15 min); emergency changes pushed via mTLS with fallback to next check-in
 
 ## Architecture
 
@@ -41,7 +44,7 @@ Linux Host Firewall Manager provides a web-based management plane for controllin
 | **Database** | PostgreSQL 16 |
 | **Memory** | 2 GB RAM minimum, 4 GB recommended |
 | **Storage** | 1 GB for application + database |
-| **Network** | HTTPS (port 443) + HTTP (port 80, GPG repo) |
+| **Network** | HTTPS (port 443, web UI/API) + mTLS (port 8443, agent check-in) |
 
 ## Building from Source
 
