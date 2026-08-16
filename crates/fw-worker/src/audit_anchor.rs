@@ -33,24 +33,20 @@ async fn anchor_chain(db: &PgPool) -> Result<(), sqlx::Error> {
 
         tracing::info!(chain_head = %head, "Audit chain anchored");
 
-        // Verify previous anchors
-        let unverified: Vec<(uuid::Uuid, String, String)> = sqlx::query_as(
-            "SELECT id, chain_head, anchor_ref FROM audit_anchor WHERE verified_at IS NULL ORDER BY anchored_at LIMIT 10",
-        )
-        .fetch_all(db)
-        .await?;
+        // External verification (S3 Object Lock / RFC 3161 TSA / remote log host) is not
+        // yet wired. Count unverified anchors and log a warning so the gap is visible — do
+        // NOT mark them verified_ok. Real external anchoring is a documented follow-up.
+        let unverified: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM audit_anchor WHERE verified_at IS NULL")
+                .fetch_one(db)
+                .await
+                .unwrap_or(0);
 
-        for (anchor_id, expected_head, ref_id) in unverified {
-            // In production: verify against external store
-            // For now, mark as verified
-            sqlx::query(
-                "UPDATE audit_anchor SET verified_at = NOW(), verified_ok = TRUE WHERE id = $1",
-            )
-            .bind(anchor_id)
-            .execute(db)
-            .await?;
-
-            tracing::debug!(anchor_id = %anchor_id, ref = %ref_id, expected = %expected_head, "Anchor verified");
+        if unverified > 0 {
+            tracing::warn!(
+                unverified,
+                "Audit anchors await external verification (no external store configured)"
+            );
         }
     }
 

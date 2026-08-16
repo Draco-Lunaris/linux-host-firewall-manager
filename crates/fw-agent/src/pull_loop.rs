@@ -19,6 +19,47 @@ use crate::backend::FirewallBackend;
 use crate::config::AgentConfig;
 use crate::pull_client::{CheckInRequest, CheckInResultRequest, PullClient, RuleDto};
 
+/// Acquire an exclusive flock on `/run/firewall-agent/apply.lock` so that two
+/// agent processes — or a pending-action apply racing a rules-changed apply —
+/// can't compile+apply at the same time. The lock is held for as long as the
+/// returned `File` lives (released on drop). Acquired on a blocking thread so
+/// the wait doesn't stall the async runtime.
+fn acquire_apply_lock() -> std::io::Result<std::fs::File> {
+    use std::os::unix::io::AsRawFd;
+    const PATH: &str = "/run/firewall-agent/apply.lock";
+    if let Some(parent) = std::path::Path::new(PATH).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(true)
+        .open(PATH)?;
+    let r = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+    if r == 0 {
+        Ok(file)
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// SHA-256 of the running agent binary (current_exe), computed once per process
+/// and sent on each check-in for integrity tracking (SEC-007 stub). Returns
+/// None if the binary can't be read.
+fn agent_binary_hash() -> Option<String> {
+    static HASH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let exe = std::env::current_exe().ok()?;
+        let bytes = std::fs::read(&exe).ok()?;
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        Some(hex::encode(hasher.finalize()))
+    })
+    .clone()
+}
+
 /// Run the pull loop as a background task.
 pub async fn run_pull_loop(
     backend: Arc<dyn FirewallBackend>,
@@ -34,41 +75,118 @@ pub async fn run_pull_loop(
         .unwrap_or_default();
     let mut interval_secs = config.read().await.pull.check_in_interval_secs;
     let mut config_version = config.read().await.pull.config_version;
+    let safe_mode =
+        crate::safe_mode::SafeModeState::new(config.read().await.safe_mode_timeout_secs);
 
     loop {
         tracing::info!(host_id = %host_id, interval = interval_secs, "Pull cycle starting");
 
-        if let Err(e) = run_pull_cycle(
+        let local_drift = match run_pull_cycle(
             &backend,
             &config,
             &pull_client,
+            &safe_mode,
             host_id,
             &mut interval_secs,
             &mut config_version,
         )
         .await
         {
-            tracing::error!(error = %e, "Pull cycle failed");
-        }
+            Ok(d) => d,
+            Err(e) => {
+                tracing::error!(error = %e, "Pull cycle failed");
+                false
+            }
+        };
 
-        tokio::time::sleep(Duration::from_secs(interval_secs.max(60) as u64)).await;
+        // On local drift, check in again soon (30s) instead of waiting the full
+        // interval, so the manager can re-apply the expected ruleset.
+        let wait_secs = if local_drift { 30 } else { interval_secs };
+        wait_for_next_cycle(&pull_client, wait_secs).await;
     }
+}
+
+/// Wait for the next pull cycle. Prefers the manager's SSE events stream
+/// (Stream 5): an operator "force check-in" emits a `check-in` event that
+/// wakes us immediately, and the stream's hold-window timeout (or any drop)
+/// also wakes us so the next cycle runs on schedule. If the SSE stream is
+/// unavailable, the `sleep(interval)` branch bounds the wait. The manager
+/// never opens a connection to the agent — the agent holds this subscription.
+async fn wait_for_next_cycle(pull_client: &PullClient, interval_secs: u32) {
+    let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+    let sse_notify = notify.clone();
+    let pc = pull_client.clone();
+    let sse_task = tokio::spawn(async move {
+        if let Err(e) = pc.run_events_stream(sse_notify).await {
+            tracing::warn!(error = %e, "SSE events stream ended; will sleep instead");
+        }
+    });
+
+    tokio::select! {
+        _ = notify.notified() => {}
+        _ = tokio::time::sleep(Duration::from_secs(interval_secs.max(60) as u64)) => {}
+    }
+    sse_task.abort();
 }
 
 async fn run_pull_cycle(
     backend: &Arc<dyn FirewallBackend>,
     config: &Arc<RwLock<AgentConfig>>,
     pull_client: &PullClient,
+    safe_mode: &crate::safe_mode::SafeModeState,
     host_id: uuid::Uuid,
     interval_secs: &mut u32,
     config_version: &mut i32,
-) -> Result<()> {
-    // 1. Compute current rules hash from backend snapshot
+) -> Result<bool> {
+    // 1. Snapshot the live firewall rules. The live hash is used only for
+    //    local drift detection (out-of-band changes vs the last-applied
+    //    snapshot below). The hash we *report* to the manager is the
+    //    field-hash of the rules we last applied (see below), so the
+    //    manager's comparison is apples-to-apples and a converged host stops
+    //    re-applying every cycle.
     let snapshot = backend
         .snapshot()
         .await
         .context("Failed to get backend snapshot")?;
-    let rules_hash = snapshot.hash;
+    let live_hash = snapshot.hash;
+
+    // Reported rules_hash = the field-hash of the rules we last applied
+    // (cached as last_good). Empty when we've never applied (the manager
+    // sends the policy on the first check-in). Recomputed from last_good
+    // each cycle so a daemon restart with an intact cache reports the
+    // matching hash and doesn't trigger a needless re-apply.
+    let reported_rules_hash = crate::safe_mode::load_last_good()
+        .map(|applied| {
+            let parts: Vec<fw_core::models::RuleHashParts<'_>> = applied
+                .iter()
+                .map(|r| fw_core::models::RuleHashParts {
+                    id: &r.id,
+                    action: r.action.as_str(),
+                    direction: r.direction.as_str(),
+                    protocol: r.protocol.as_str(),
+                    src_cidr: r.src_cidr.as_deref(),
+                    dst_cidr: r.dst_cidr.as_deref(),
+                    dst_port_start: r.dst_port_start,
+                })
+                .collect();
+            fw_core::models::compute_rules_hash(&parts)
+        })
+        .unwrap_or_default();
+
+    // Local drift: the live rules differ from the last-applied ruleset (someone
+    // changed them out-of-band). Schedule an early check-in so the manager can
+    // re-apply sooner. (The manager also detects this via check_in_mismatch.)
+    let local_drift = match crate::drift::load_expected_hash() {
+        Some(expected) if expected != live_hash => {
+            tracing::warn!(
+                expected = %expected,
+                actual = %live_hash,
+                "Local drift detected — live rules differ from last applied; scheduling early check-in"
+            );
+            true
+        }
+        _ => false,
+    };
 
     // 2. Gather agent info
     let _backend_status = backend
@@ -81,15 +199,46 @@ async fn run_pull_cycle(
     // 3. Call check-in
     let req = CheckInRequest {
         host_id,
-        rules_hash: rules_hash.clone(),
+        rules_hash: reported_rules_hash.clone(),
         agent_version: env!("CARGO_PKG_VERSION").to_string(),
         backend_type: backend.name().to_string(),
         os_info,
         uptime_seconds: uptime,
         config_version: *config_version,
+        local_drift,
+        agent_binary_hash: agent_binary_hash(),
     };
 
-    let response = pull_client.check_in(&req).await?;
+    let safe_mode_enabled = config.read().await.safe_mode_enabled;
+
+    // 3. Call check-in. On success, record manager contact for safe mode. On
+    // failure, if safe mode is enabled and the unreachable timeout has elapsed,
+    // revert to the last-known-good ruleset rather than leaving the host running
+    // a stale/unmanaged ruleset.
+    let response = match pull_client.check_in(&req).await {
+        Ok(r) => {
+            safe_mode.record_manager_contact();
+            r
+        }
+        Err(e) => {
+            if safe_mode_enabled && safe_mode.check() {
+                tracing::warn!(error = %e, "Manager unreachable; safe mode active — reverting to last-known-good");
+                if let Ok(last_good) = crate::safe_mode::load_last_good() {
+                    if !last_good.is_empty() {
+                        let protected_cidrs = config.read().await.protected_cidrs.clone();
+                        if let Err(revert_err) =
+                            apply_rules(backend, &last_good, &protected_cidrs).await
+                        {
+                            tracing::error!(error = %revert_err, "Safe-mode revert apply failed");
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!(error = %e, "Check-in failed");
+            }
+            return Ok(false);
+        }
+    };
 
     // 4. Apply config updates if present
     if let Some(ref cfg_update) = response.config {
@@ -100,7 +249,6 @@ async fn run_pull_cycle(
             let mut cfg = config.write().await;
             cfg.pull.check_in_interval_secs = *interval_secs;
             cfg.pull.config_version = *config_version;
-            cfg.pull.push_enabled = cfg_update.push_enabled;
             cfg.safe_mode_enabled = cfg_update.safe_mode_enabled;
         }
         tracing::info!(
@@ -108,16 +256,52 @@ async fn run_pull_cycle(
             version = *config_version,
             "Config updated from manager"
         );
+        // Persist to disk so a daemon restart starts from the latest config
+        // rather than the stale enrollment value (which would re-fetch on the
+        // first check-in — harmless, but the on-disk config should reflect
+        // what the agent is actually running).
+        if let Err(e) = config.read().await.save() {
+            tracing::warn!(error = %e, "Failed to persist config update to disk");
+        }
     }
 
-    // 5. Apply new rules if changed
-    if response.rules_changed && !response.rules.is_empty() {
-        tracing::info!(
-            rule_count = response.rules.len(),
-            "Rules changed, applying new ruleset"
-        );
-        match apply_rules_from_dto(backend, &response.rules).await {
+    // 5. Apply rules. Two triggers, each leading to a single apply:
+    //   - rules_changed: the manager's policy changed since we last applied
+    //     → apply the new ruleset the manager just sent.
+    //   - local_drift: our live rules differ from what we last applied (an
+    //     out-of-band change) → re-apply our cached last-applied ruleset
+    //     (self-heal), which is the current policy.
+    // In steady state (neither) we do nothing — no `ufw reset`, so no
+    // repeated network interruption when nothing has changed.
+    let apply_outcome: Option<Result<String>> =
+        if response.rules_changed && !response.rules.is_empty() {
+            tracing::info!(
+                rule_count = response.rules.len(),
+                "Rules changed, applying new ruleset"
+            );
+            let protected_cidrs = config.read().await.protected_cidrs.clone();
+            Some(apply_rules_from_dto(backend, &response.rules, &protected_cidrs).await)
+        } else if local_drift {
+            tracing::info!("Local drift detected — re-applying last-applied ruleset (self-heal)");
+            match crate::safe_mode::load_last_good() {
+                Ok(last_good) if !last_good.is_empty() => {
+                    let protected_cidrs = config.read().await.protected_cidrs.clone();
+                    Some(apply_rules(backend, &last_good, &protected_cidrs).await)
+                }
+                _ => {
+                    tracing::warn!("Local drift but no last-applied ruleset cached to re-apply");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+    if let Some(result) = apply_outcome {
+        match result {
             Ok(new_hash) => {
+                // Persist the last-applied hash for local drift detection.
+                let _ = crate::drift::save_expected_hash(&new_hash);
                 let result_req = CheckInResultRequest {
                     host_id,
                     action_id: None,
@@ -136,7 +320,7 @@ async fn run_pull_cycle(
                     action_id: None,
                     success: false,
                     error_message: Some(e.to_string()),
-                    new_rules_hash: rules_hash.clone(),
+                    new_rules_hash: live_hash.clone(),
                 };
                 if let Err(e) = pull_client.report_result(&result_req).await {
                     tracing::warn!(error = %e, "Failed to report error to manager");
@@ -145,52 +329,109 @@ async fn run_pull_cycle(
         }
     }
 
-    // 6. Execute pending actions
+    // 6. Execute pending actions (skip replays — already-executed actions whose
+    // result report was likely lost; ack them without re-executing).
     for action in &response.pending_actions {
+        if crate::replay_cache::already_executed(&action.id.to_string()) {
+            tracing::info!(action_id = %action.id, "Pending action already executed — skipping replay");
+            let result_req = CheckInResultRequest {
+                host_id,
+                action_id: Some(action.id),
+                success: true,
+                error_message: None,
+                new_rules_hash: live_hash.clone(),
+            };
+            if let Err(e) = pull_client.report_result(&result_req).await {
+                tracing::warn!(error = %e, "Failed to ack replayed action to manager");
+            }
+            continue;
+        }
         tracing::info!(
             action_id = %action.id,
             action_type = %action.action_type,
             "Executing pending action"
         );
         let (success, error_msg) = execute_pending_action(backend, action).await;
+        if success {
+            let _ = crate::replay_cache::record(&action.id.to_string());
+        }
 
         let result_req = CheckInResultRequest {
             host_id,
             action_id: Some(action.id),
             success,
             error_message: error_msg,
-            new_rules_hash: rules_hash.clone(),
+            new_rules_hash: live_hash.clone(),
         };
         if let Err(e) = pull_client.report_result(&result_req).await {
             tracing::warn!(error = %e, "Failed to report action result to manager");
         }
     }
 
-    Ok(())
+    Ok(local_drift)
 }
 
 /// Convert RuleDto list to FirewallRule list, compile, and apply via backend.
+/// Rules are first checked against the host's protected CIDRs (SEC-006): a
+/// rule that would block a protected CIDR, or expose one to a broad source, is
+/// rejected before it reaches the backend.
 async fn apply_rules_from_dto(
     backend: &Arc<dyn FirewallBackend>,
     dtos: &[RuleDto],
+    protected_cidrs: &[String],
 ) -> Result<String> {
     let rules: Vec<FirewallRule> = dtos.iter().map(dto_to_rule).collect();
+    apply_rules(backend, &rules, protected_cidrs).await
+}
 
-    // Compile the rules
+/// Compile and apply a ruleset under the per-host apply mutex, after enforcing
+/// protected CIDRs. Returns the new snapshot hash. Shared by the normal apply
+/// path and the safe-mode revert (which already has FirewallRules, not DTOs).
+async fn apply_rules(
+    backend: &Arc<dyn FirewallBackend>,
+    rules: &[FirewallRule],
+    protected_cidrs: &[String],
+) -> Result<String> {
+    // Enforce protected CIDRs before compiling/applying.
+    if let Err(violations) =
+        crate::protected_cidrs::check_rules_against_protected(rules, protected_cidrs)
+    {
+        anyhow::bail!("protected CIDR violations: {}", violations.join("; "));
+    }
+
+    // Hold the per-host apply mutex for the whole compile+apply so concurrent
+    // applies can't race (S6.1). Acquired on a blocking thread; held until the
+    // guard drops at the end of this function.
+    let _apply_lock = tokio::task::spawn_blocking(acquire_apply_lock)
+        .await
+        .map_err(|e| anyhow::anyhow!("apply lock task: {}", e))?
+        .map_err(|e| anyhow::anyhow!("acquire apply lock: {}", e))?;
+
     let compiled = backend
-        .compile(&rules)
+        .compile(rules)
         .await
         .map_err(|e| anyhow::anyhow!("Compile failed: {}", e))?;
 
-    // Apply the compiled rules
     let result = backend
         .apply(&compiled)
         .await
         .map_err(|e| anyhow::anyhow!("Apply failed: {}", e))?;
 
+    tracing::info!(
+        applied = result.applied,
+        failed = result.failed,
+        "backend apply result"
+    );
+    if let Some(err) = &result.error {
+        tracing::warn!(error = %err, "backend reported an apply error");
+    }
+
     if result.failed > 0 {
         anyhow::bail!("{} rules failed to apply", result.failed);
     }
+
+    // Persist this ruleset as the last-known-good for safe-mode revert (S6.2).
+    let _ = crate::safe_mode::save_last_good(rules);
 
     Ok(result.snapshot_hash)
 }

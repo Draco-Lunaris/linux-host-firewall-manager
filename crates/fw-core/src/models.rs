@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use sqlx::types::Json;
 use uuid::Uuid;
 
@@ -37,6 +38,16 @@ pub enum FirewallDirection {
     Forward,
 }
 
+impl FirewallDirection {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::In => "in",
+            Self::Out => "out",
+            Self::Forward => "forward",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "firewall_protocol", rename_all = "lowercase")]
 pub enum FirewallProtocol {
@@ -49,6 +60,22 @@ pub enum FirewallProtocol {
     Esp,
     Ah,
     Sctp,
+}
+
+impl FirewallProtocol {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Any => "any",
+            Self::Tcp => "tcp",
+            Self::Udp => "udp",
+            Self::Icmp => "icmp",
+            Self::Icmpv6 => "icmpv6",
+            Self::Gre => "gre",
+            Self::Esp => "esp",
+            Self::Ah => "ah",
+            Self::Sctp => "sctp",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
@@ -72,26 +99,6 @@ impl UserRole {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "job_status", rename_all = "lowercase")]
-pub enum JobStatus {
-    Queued,
-    Pending,
-    Running,
-    Succeeded,
-    Failed,
-    Cancelled,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "job_kind", rename_all = "lowercase")]
-pub enum JobKind {
-    RuleApply,
-    RuleRemove,
-    Reboot,
-    Rollback,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "host_health_status", rename_all = "lowercase")]
 pub enum HostHealthStatus {
     Pending,
@@ -101,6 +108,7 @@ pub enum HostHealthStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "cert_status", rename_all = "lowercase")]
 pub enum CertStatus {
     Active,
@@ -115,15 +123,6 @@ pub enum AuthProvider {
     AzureSso,
     Keycloak,
     Oidc,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "window_recurrence", rename_all = "lowercase")]
-pub enum WindowRecurrence {
-    Once,
-    Daily,
-    Weekly,
-    Monthly,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
@@ -176,6 +175,7 @@ pub enum AuditAction {
     CaIntermediateIssued,
     CaIntermediateRevoked,
     AuditAnchorMismatch,
+    PolicyForceCheckin,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
@@ -238,6 +238,70 @@ pub struct FirewallRule {
     pub created_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Column list for `firewall_rules` with the inet CIDR columns cast to text.
+/// sqlx cannot decode `inet` into the model's `Option<String>` fields, so
+/// every SELECT/RETURNING over `firewall_rules` must use this list (casting
+/// `src_cidr`/`dst_cidr` to text and aliasing them back to the column name for
+/// `FromRow`) instead of `*`. INSERT/UPDATE binds of those columns must use
+/// `$N::inet` for the reverse direction (text → inet).
+pub const FIREWALL_RULE_COLS: &str = "id, name, description, action, direction, \
+    protocol, src_cidr::text AS src_cidr, src_port_start, src_port_end, \
+    dst_cidr::text AS dst_cidr, dst_port_start, dst_port_end, interface_in, \
+    interface_out, comment, log, priority, created_by, created_at, updated_at";
+
+/// Same as `FIREWALL_RULE_COLS` but with the `r.` table alias, for joins that
+/// select from `firewall_rules r` (e.g. policy-set rule listings).
+pub const FIREWALL_RULE_COLS_R: &str = "r.id, r.name, r.description, r.action, \
+    r.direction, r.protocol, r.src_cidr::text AS src_cidr, r.src_port_start, \
+    r.src_port_end, r.dst_cidr::text AS dst_cidr, r.dst_port_start, \
+    r.dst_port_end, r.interface_in, r.interface_out, r.comment, r.log, \
+    r.priority, r.created_by, r.created_at, r.updated_at";
+
+// ============================================================
+// Drift hash — shared by the manager and the agent
+// ============================================================
+
+/// The canonical rule fields used to compute the drift hash. Both the
+/// manager (from the assigned policy rules) and the agent (from the rules it
+/// last applied) build these so the two sides hash the *same representation*
+/// — the agent reports this hash on check-in, not its backend's live-status
+/// text hash, so the comparison is apples-to-apples and converges.
+#[derive(Clone, Copy)]
+pub struct RuleHashParts<'a> {
+    pub id: &'a Uuid,
+    pub action: &'a str,
+    pub direction: &'a str,
+    pub protocol: &'a str,
+    pub src_cidr: Option<&'a str>,
+    pub dst_cidr: Option<&'a str>,
+    pub dst_port_start: Option<i32>,
+}
+
+/// SHA-256 over a ruleset's canonical fields (id, action, direction,
+/// protocol, src_cidr, dst_cidr, dst_port_start). Stable across the manager
+/// and the agent: the manager computes the *expected* hash of the assigned
+/// policy; the agent computes the hash of the rules it applied. Equal hashes
+/// ⇒ the agent is running the current policy ⇒ no re-apply.
+pub fn compute_rules_hash(rules: &[RuleHashParts<'_>]) -> String {
+    let mut hasher = sha2::Sha256::new();
+    for r in rules {
+        hasher.update(r.id.as_bytes());
+        hasher.update(r.action.as_bytes());
+        hasher.update(r.direction.as_bytes());
+        hasher.update(r.protocol.as_bytes());
+        if let Some(c) = r.src_cidr {
+            hasher.update(c.as_bytes());
+        }
+        if let Some(c) = r.dst_cidr {
+            hasher.update(c.as_bytes());
+        }
+        if let Some(p) = r.dst_port_start {
+            hasher.update(p.to_le_bytes());
+        }
+    }
+    hex::encode(hasher.finalize())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -323,38 +387,6 @@ pub struct Group {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct FirewallJob {
-    pub id: Uuid,
-    pub kind: JobKind,
-    pub status: JobStatus,
-    pub created_by_user_id: Option<Uuid>,
-    pub parent_job_id: Option<Uuid>,
-    pub maintenance_window_id: Option<Uuid>,
-    pub immediate: bool,
-    pub policy_set_id: Option<Uuid>,
-    pub notes: String,
-    pub created_at: DateTime<Utc>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub scheduled_for: Option<DateTime<Utc>>,
-    pub auto_apply: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct FirewallJobHost {
-    pub id: Uuid,
-    pub job_id: Uuid,
-    pub host_id: Uuid,
-    pub status: JobStatus,
-    pub agent_job_id: Option<String>,
-    pub retry_count: i32,
-    pub output: String,
-    pub error_message: Option<String>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Certificate {
     pub id: Uuid,
     pub host_id: Option<Uuid>,
@@ -367,23 +399,6 @@ pub struct Certificate {
     pub cert_pem: String,
     pub ca_tier: String,
     pub parent_cert_id: Option<Uuid>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct MaintenanceWindow {
-    pub id: Uuid,
-    pub host_id: Uuid,
-    pub label: String,
-    pub recurrence: WindowRecurrence,
-    pub start_at: DateTime<Utc>,
-    pub duration_minutes: i32,
-    pub recurrence_day: Option<i32>,
-    pub enabled: bool,
-    pub auto_apply: bool,
-    pub notify_before_minutes: Option<i32>,
-    pub last_triggered_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
 }
 
 // ============================================================
@@ -431,6 +446,9 @@ pub struct EnrollmentRequest {
     pub hostname: Option<String>,
     pub os_details: Json<serde_json::Value>,
     pub polling_token: String,
+    /// The agent's CSR (PEM), captured at submission so the manager can sign it
+    /// on approval. NULL for legacy rows.
+    pub csr: Option<String>,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
 }
@@ -444,13 +462,6 @@ pub struct AuditAnchor {
     pub anchor_ref: String,
     pub verified_at: Option<DateTime<Utc>>,
     pub verified_ok: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct HostApplyLock {
-    pub host_id: Uuid,
-    pub locked_by_job: Option<Uuid>,
-    pub locked_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -478,7 +489,11 @@ pub struct PullConfigBundle {
     pub check_in_interval_secs: i32,
     pub push_enabled: bool,
     pub config_version: i32,
-    pub manager_check_in_url: String,
+    /// Base URL of the manager's agent mTLS API (e.g. "https://mgr:8443").
+    /// The agent appends the endpoint paths (`/api/v1/agent/check-in`, …) —
+    /// this is a *base*, not the full check-in URL, so all four agent
+    /// endpoints (check-in, check-in/result, policy, events) share it.
+    pub manager_agent_url: String,
 }
 
 // ============================================================
@@ -497,6 +512,11 @@ pub struct AgentCheckIn {
     pub config_version: i32,
     pub pending_results: serde_json::Value,
     pub checked_in_at: chrono::DateTime<chrono::Utc>,
+    // Apply-result fields (written by POST /check-in/result; NULL until a result arrives)
+    pub apply_success: Option<bool>,
+    pub apply_error: Option<String>,
+    pub applied_rule_count: Option<i32>,
+    pub applied_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -507,6 +527,7 @@ pub struct HostConfigOverride {
     pub safe_mode_enabled: bool,
     pub backend_override: Option<String>,
     pub config_version: i32,
+    pub last_known_good_hash: Option<String>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 

@@ -1,19 +1,15 @@
-#![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
 use anyhow::Context;
 use fw_agent::pull_client;
 
 mod backend;
-mod compiler;
 mod config;
 mod drift;
 mod enrollment;
-mod mtls;
 mod protected_cidrs;
 mod pull_loop;
-mod routes;
+mod replay_cache;
 mod safe_mode;
-mod server;
 
 use clap::{Parser, Subcommand};
 
@@ -104,7 +100,8 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Run the agent daemon — starts both the pull loop (primary) and the push server (secondary).
+/// Run the agent daemon — starts the pull loop (the only apply path in the
+/// pull model; the manager never contacts the agent).
 async fn run_daemon() -> anyhow::Result<()> {
     let cfg = config::AgentConfig::load()
         .ok_or_else(|| anyhow::anyhow!("Agent not configured — run 'fw-agent enroll' first"))?;
@@ -126,12 +123,16 @@ async fn run_daemon() -> anyhow::Result<()> {
     let ca_cert = std::fs::read_to_string(format!("{}/ca.pem", cert_dir))
         .context("Failed to read CA certificate")?;
 
-    // Create the pull client
-    let manager_url = if cfg.pull.manager_check_in_url.is_empty() {
-        cfg.manager_url.clone()
-    } else {
-        cfg.pull.manager_check_in_url.clone()
-    };
+    // Create the pull client. `manager_agent_url` is the base URL of the
+    // manager's mTLS agent API (e.g. "https://mgr:8443"); the pull client
+    // appends the endpoint paths. It is always set by a successful enrollment,
+    // so an empty value means the config is stale — re-enroll rather than fall
+    // back to the human-UI `manager_url` (port 443), which does not mount the
+    // agent API and would 404 every check-in.
+    let manager_url = cfg.pull.manager_agent_url.clone();
+    if manager_url.is_empty() {
+        anyhow::bail!("manager_agent_url is not set in config — run 'fw-agent enroll' first");
+    }
     let pull_client =
         pull_client::PullClient::new(&manager_url, host_id, &client_cert, &client_key, &ca_cert)?;
 
@@ -149,21 +150,11 @@ async fn run_daemon() -> anyhow::Result<()> {
     tokio::spawn(async move {
         pull_loop::run_pull_loop(pull_backend, pull_config, pull_client).await;
     });
-    tracing::info!("Pull loop started (primary mode)");
+    tracing::info!("Pull loop started (pull-only mode)");
 
-    // Start the push server (secondary, for emergency push) if push_enabled
-    if cfg.pull.push_enabled {
-        tracing::info!("Push server starting (secondary mode, for emergency push)");
-        // The existing server::run() handles the mTLS push server
-        // For now, we just log — the push server will be wired in Phase 4
-        // when we rework the worker's push dispatcher
-        tokio::signal::ctrl_c().await?;
-        tracing::info!("Agent shutting down");
-    } else {
-        tracing::info!("Push server disabled — pull-only mode");
-        tokio::signal::ctrl_c().await?;
-        tracing::info!("Agent shutting down");
-    }
+    // No push server in the pull model — the manager never contacts the agent.
+    tokio::signal::ctrl_c().await?;
+    tracing::info!("Agent shutting down");
 
     Ok(())
 }
@@ -176,7 +167,6 @@ async fn status_report() -> anyhow::Result<()> {
         if let Some(id) = c.host_id {
             println!("Host ID: {}", id);
         }
-        println!("Listen port: {}", c.listen_port);
         println!(
             "Safe mode: {} (timeout: {}s)",
             if c.safe_mode_enabled {

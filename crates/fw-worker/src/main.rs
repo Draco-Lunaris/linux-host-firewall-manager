@@ -1,23 +1,21 @@
 //! fw-worker — background worker for Linux Host Firewall Manager.
 //!
-//! Responsibilities (hybrid push/pull model):
-//! - Stale agent detection (5-min) — marks hosts degraded/unreachable based on check-in staleness
-//! - Push dispatcher — attempts emergency push of high-priority pending actions
-//! - Audit integrity verification (daily)
-//! - Audit external anchoring (daily — SEC-004)
-//! - Refresh listener (PostgreSQL NOTIFY events)
+//! Responsibilities (agent-pull model):
+//! - Stale agent detection — marks hosts degraded/unreachable based on check-in staleness
+//! - Audit external anchoring (daily — SEC-004; records anchors, verification against an
+//!   external store is a documented follow-up)
+//!
+//! The manager never initiates contact with agents, so there is no push dispatcher, job
+//! executor, or agent HTTP client. Agents pull policy on their check-in interval.
 
 use fw_core::AppConfig;
 use sqlx::PgPool;
 use std::sync::Arc;
-use tokio::sync::Semaphore;
 
 mod audit_anchor;
-mod push_dispatcher;
-mod refresh_listener;
 mod stale_agent_detector;
 
-const REQUIRED_MIGRATION_COUNT: i32 = 30;
+const REQUIRED_MIGRATION_COUNT: i32 = 32;
 const SCHEMA_CHECK_TIMEOUT_SECS: u64 = 120;
 
 #[tokio::main]
@@ -36,7 +34,6 @@ async fn main() -> anyhow::Result<()> {
     wait_for_migrations(&db).await;
     tracing::info!("fw-worker starting (migrations verified)");
 
-    let semaphore = Arc::new(Semaphore::new(config.worker.max_concurrent_agent_calls));
     let db = Arc::new(db);
 
     // Spawn background tasks
@@ -46,21 +43,13 @@ async fn main() -> anyhow::Result<()> {
     let db2 = db.clone();
     tokio::spawn(async move { audit_anchor::run(db2).await });
 
-    let db3 = db.clone();
-    tokio::spawn(async move { refresh_listener::run(db3).await });
-
-    // Main loop: push dispatcher (emergency push only)
-    let db4 = db.clone();
-    let sem = semaphore.clone();
-    tokio::spawn(async move { push_dispatcher::run(db4, sem).await });
-
     // Heartbeat
-    let db5 = db.clone();
+    let db3 = db.clone();
     tokio::spawn(async move {
         loop {
             let _ = sqlx::query("INSERT INTO worker_heartbeat (id, last_seen, worker_version) VALUES (1, NOW(), $1) ON CONFLICT (id) DO UPDATE SET last_seen = NOW(), worker_version = $1")
                 .bind(env!("CARGO_PKG_VERSION"))
-                .execute(&*db5)
+                .execute(&*db3)
                 .await;
             tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
         }

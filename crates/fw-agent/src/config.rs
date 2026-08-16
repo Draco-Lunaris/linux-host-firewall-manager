@@ -6,8 +6,6 @@ pub struct AgentConfig {
     pub fqdn: String,
     #[serde(default)]
     pub host_id: Option<String>,
-    #[serde(default = "default_port")]
-    pub listen_port: u16,
     #[serde(default = "default_cert_dir")]
     pub cert_dir: String,
     #[serde(default = "default_config_dir")]
@@ -29,9 +27,7 @@ pub struct PullConfig {
     #[serde(default = "default_check_in_interval")]
     pub check_in_interval_secs: u32,
     #[serde(default)]
-    pub manager_check_in_url: String,
-    #[serde(default = "default_push_enabled")]
-    pub push_enabled: bool,
+    pub manager_agent_url: String,
     #[serde(default)]
     pub config_version: i32,
 }
@@ -40,13 +36,6 @@ fn default_check_in_interval() -> u32 {
     900
 }
 
-fn default_push_enabled() -> bool {
-    true
-}
-
-fn default_port() -> u16 {
-    12443
-}
 fn default_cert_dir() -> String {
     "/etc/firewall-agent/certs".to_string()
 }
@@ -66,7 +55,6 @@ impl Default for AgentConfig {
             manager_url: String::new(),
             fqdn: String::new(),
             host_id: None,
-            listen_port: default_port(),
             cert_dir: default_cert_dir(),
             config_dir: default_config_dir(),
             log_dir: default_log_dir(),
@@ -75,8 +63,7 @@ impl Default for AgentConfig {
             protected_cidrs: Vec::new(),
             pull: PullConfig {
                 check_in_interval_secs: default_check_in_interval(),
-                manager_check_in_url: String::new(),
-                push_enabled: default_push_enabled(),
+                manager_agent_url: String::new(),
                 config_version: 0,
             },
         }

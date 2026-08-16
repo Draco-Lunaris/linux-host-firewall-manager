@@ -35,12 +35,12 @@ export default function SettingsPage() {
     enabled: false, host: '', port: 587, username: '', password: '', from: '', tls_mode: 'starttls',
   })
   const [polling, setPolling] = useState<PollingConfig>({
-    health_poll_interval_secs: 300, patch_poll_interval_secs: 1800,
+    check_in_interval_secs: 900,
   })
   const [ipWhitelist, setIpWhitelist] = useState<string[]>([])
   const [webTlsStrategy, setWebTlsStrategy] = useState('internal_ca')
   const [notification, setNotification] = useState<NotificationConfig>({
-    email_enabled: false, email_from: 'patch-manager@localhost', recipients: [],
+    email_enabled: false, email_from: 'firewall-manager@localhost', recipients: [],
   })
 
   const [saving, setSaving] = useState(false)
@@ -316,7 +316,7 @@ export default function SettingsPage() {
                 label="Redirect URI"
                 value={oidc.redirect_uri}
                 onChange={(e) => setOidc({ ...oidc, redirect_uri: e.target.value })}
-                helperText="e.g. https://patch-manager.example.com/api/v1/auth/sso/callback"
+                helperText="e.g. https://firewall-manager.example.com/api/v1/auth/sso/callback"
                 disabled={!oidc.enabled}
               />
             </Grid>
@@ -435,10 +435,7 @@ export default function SettingsPage() {
         <AccordionDetails>
           <Grid container spacing={2}>
             <Grid size={6}>
-              <TextField fullWidth label="Health Poll Interval (seconds)" type="number" value={polling.health_poll_interval_secs} onChange={(e) => setPolling({ ...polling, health_poll_interval_secs: Number(e.target.value) })} helperText="How often to check agent health (default: 300)" />
-            </Grid>
-            <Grid size={6}>
-              <TextField fullWidth label="Patch Data Poll Interval (seconds)" type="number" value={polling.patch_poll_interval_secs} onChange={(e) => setPolling({ ...polling, patch_poll_interval_secs: Number(e.target.value) })} helperText="How often to check for patch updates (default: 1800)" />
+              <TextField fullWidth label="Default Check-in Interval (seconds)" type="number" value={polling.check_in_interval_secs} onChange={(e) => setPolling({ ...polling, check_in_interval_secs: Number(e.target.value) })} helperText="How often agents pull their assigned policy (default: 900)" />
             </Grid>
           </Grid>
         </AccordionDetails>

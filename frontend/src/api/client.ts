@@ -3,10 +3,6 @@ import { useAuthStore } from '../store/authStore'
 import type {
   FleetStatus,
   CreateHostRequest,
-  CreateJobRequest,
-  CreateMaintenanceWindowRequest,
-  MaintenanceWindow,
-  UpdateMaintenanceWindowRequest,
   Certificate,
   IssuedCert,
   HealthCheckWithResult,
@@ -157,45 +153,46 @@ export const hostsApi = {
     apiClient.put(`/hosts/${id}`, body),
   delete: (id: string) => apiClient.delete(`/hosts/${id}`),
   refresh: (id: string) => apiClient.post(`/hosts/${id}/refresh`),
+  /** POST /hosts/{id}/force-check-in — signal the agent's SSE subscription to check in now. */
+  forceCheckIn: (id: string) => apiClient.post(`/hosts/${id}/force-check-in`),
 }
 
-// ── Jobs API ─────────────────────────────────────────────────────────────────
-export const jobsApi = {
-  list: (params?: Record<string, unknown>) => apiClient.get('/jobs', { params }),
-  get: (id: string) => apiClient.get(`/jobs/${id}`),
-  create: (body: CreateJobRequest) => apiClient.post('/jobs', body),
-  cancel: (id: string) => apiClient.post(`/jobs/${id}/cancel`),
-  rollback: (id: string) => apiClient.post(`/jobs/${id}/rollback`),
+// ── Check-in history API (pull model) ────────────────────────────────────────
+export interface CheckIn {
+  id: string
+  checked_in_at: string
+  rules_hash: string
+  agent_version: string
+  backend_type: string
+  apply_success: boolean | null
+  apply_error: string | null
+  applied_rule_count: number | null
+  applied_at: string | null
 }
 
-// ── Patches API (per-host patch listing) ──────────────────────────────────────
-export const patchesApi = {
-  // Returns patches available on a specific host via the manager's proxy
-  // The backend reads from host_patch_data table (cached from agent poll)
-  getHostPatches: (hostId: string) => apiClient.get(`/hosts/${hostId}/patches`),
+export const checkInsApi = {
+  /** GET /hosts/{id}/check-ins — recent agent check-ins with apply results. */
+  list: (hostId: string) => apiClient.get<CheckIn[]>(`/hosts/${hostId}/check-ins`),
 }
 
-// ── Maintenance Windows API ───────────────────────────────────────────────────
-export const maintenanceWindowsApi = {
-  /** Bulk: fetch ALL maintenance windows across every host in one request. */
-  listAll: () =>
-    apiClient.get<{ windows: MaintenanceWindow[] }>('/maintenance-windows'),
-  /** Per-host: fetch windows for a single host. */
-  list: (hostId: string) =>
-    apiClient.get(`/hosts/${hostId}/maintenance-windows`),
-  create: (hostId: string, body: CreateMaintenanceWindowRequest) =>
-    apiClient.post(`/hosts/${hostId}/maintenance-windows`, body),
-  update: (hostId: string, windowId: string, body: UpdateMaintenanceWindowRequest) =>
-    apiClient.put(`/hosts/${hostId}/maintenance-windows/${windowId}`, body),
-  remove: (hostId: string, windowId: string) =>
-    apiClient.delete(`/hosts/${hostId}/maintenance-windows/${windowId}`),
+// ── Drift history API (audit log of firewall-rule drift) ──────────────────────
+export interface DriftSnapshot {
+  id: string
+  host_id: string
+  fqdn: string
+  display_name: string
+  snapshot_hash: string
+  rule_count: number
+  /** 'check_in_mismatch' = live rules diverged from policy (a drift event);
+   *  'agent_report' = the agent applied a ruleset (often the correction). */
+  source: string
+  captured_at: string
 }
 
-// ── WebSocket API (M7) ────────────────────────────────────────────────────────
-export const wsApi = {
-  /** POST /api/v1/ws/ticket — obtain a single-use WS auth ticket (60 s expiry). */
-  createTicket: (): Promise<{ ticket: string }> =>
-    apiClient.post<{ ticket: string }>('/ws/ticket').then((r) => r.data),
+export const driftApi = {
+  /** GET /drift/snapshots[?host_id=&limit=] — fleet-wide drift history, newest first. */
+  list: (params?: { host_id?: string; limit?: number }) =>
+    apiClient.get<DriftSnapshot[]>('/drift/snapshots', { params }),
 }
 
 // ── Certificates API (M8) ────────────────────────────────────────────────────
@@ -229,26 +226,6 @@ export const certsApi = {
     apiClient.post<IssuedCert>(`/hosts/${hostId}/certificates/reissue`),
 }
 
-// ── Reports API (M9) ─────────────────────────────────────────────────────────
-export type ReportType = 'compliance' | 'patch-history' | 'vulnerability' | 'audit'
-export type ReportFormat = 'csv' | 'pdf'
-
-export const reportsApi = {
-  download: (
-    reportType: ReportType,
-    format: ReportFormat,
-    params?: {
-      from?: string        // ISO 8601
-      to?: string          // ISO 8601
-      group_id?: string    // UUID
-    }
-  ) =>
-    apiClient.get(`/reports/${reportType}`, {
-      params: { format, ...params },
-      responseType: 'blob',
-      timeout: 120_000,   // reports can take a while
-    }),
-}
 // ── Settings API (M10) ────────────────────────────────────────────────────
 
 /** @deprecated Use OidcConfigResponse instead */
@@ -291,8 +268,7 @@ export interface SmtpConfig {
 }
 
 export interface PollingConfig {
-  health_poll_interval_secs: number
-  patch_poll_interval_secs: number
+  check_in_interval_secs: number
 }
 
 export interface NotificationConfig {
@@ -400,7 +376,7 @@ export const enrollmentApi = {
     apiClient.post(`/admin/enrollments/${id}/approve`).then(() => {}),
 
   deny: (id: string): Promise<void> =>
-    apiClient.delete(`/admin/enrollments/${id}/deny`).then(() => {}),
+    apiClient.post(`/admin/enrollments/${id}/deny`).then(() => {}),
 }
 
 
@@ -457,6 +433,8 @@ export interface ValidateRuleResponse {
 
 export const rulesApi = {
   list: () => apiClient.get<{ rules: FirewallRule[]; total: number }>("/rules"),
+  /** GET /rules/flagged — rules requiring admin approval (broad allows, SEC-003). */
+  listFlagged: () => apiClient.get<FirewallRule[]>("/rules/flagged"),
   get: (id: string) => apiClient.get<FirewallRule>(`/rules/${id}`),
   create: (data: CreateRuleRequest) => apiClient.post<FirewallRule>("/rules", data),
   update: (id: string, data: Partial<CreateRuleRequest>) => apiClient.put<FirewallRule>(`/rules/${id}`, data),
@@ -489,19 +467,51 @@ export const policySetsApi = {
   listRules: (id: string) => apiClient.get<{ rules: FirewallRule[] }>(`/policy-sets/${id}/rules`),
   addRule: (id: string, ruleId: string, order?: number) => apiClient.post(`/policy-sets/${id}/rules`, { rule_id: ruleId, rule_order: order }),
   removeRule: (id: string, ruleId: string) => apiClient.delete(`/policy-sets/${id}/rules/${ruleId}`),
+  /** PUT /policy-sets/{id}/rules/reorder — rewrite rule_order to match the given order. */
+  reorder: (id: string, ruleIds: string[]) => apiClient.put(`/policy-sets/${id}/rules/reorder`, { rule_ids: ruleIds }),
   preview: (id: string) => apiClient.post<PreviewCompilationResponse>(`/policy-sets/${id}/preview`),
 }
 
-// ── Deployment API ──────────────────────────────────────────────────────────
-export interface DeployResponse {
-  job_id: string
-  host_count: number
-  status: string
+// ── Deployment API (assignment-only — pull model) ────────────────────────────
+// There is no job or push: assigning a policy set here is the only apply path.
+// The agent pulls its assigned policy on the next check-in and applies it.
+export interface AssignResponse {
+  policy_set_id: string
+  assigned_count: number
+  host_ids: string[]
+}
+
+export interface UnassignResponse {
+  policy_set_id: string
+  unassigned_from: number
+}
+
+export interface DeploymentPreviewResponse {
+  ufw_command: string[]
+  firewalld_command: string[]
+  rule_count: number
 }
 
 export const deploymentApi = {
-  deploy: (policySetId: string, hostIds: string[], immediate?: boolean) =>
-    apiClient.post<DeployResponse>("/deployment", { policy_set_id: policySetId, host_ids: hostIds, immediate }),
+  /** POST /deployment/assign — assign a policy set to hosts (optionally groups). */
+  assign: (policySetId: string, hostIds: string[], groupIds?: string[]) =>
+    apiClient.post<AssignResponse>("/deployment/assign", {
+      policy_set_id: policySetId,
+      host_ids: hostIds,
+      group_ids: groupIds ?? [],
+    }),
+  /** POST /deployment/unassign — remove a policy set from hosts/groups. */
+  unassign: (policySetId: string, hostIds: string[], groupIds?: string[]) =>
+    apiClient.post<UnassignResponse>("/deployment/unassign", {
+      policy_set_id: policySetId,
+      host_ids: hostIds,
+      group_ids: groupIds ?? [],
+    }),
+  /** POST /deployment/preview — compiled ufw/firewalld commands + rule count. */
+  preview: (policySetId: string) =>
+    apiClient.post<DeploymentPreviewResponse>("/deployment/preview", {
+      policy_set_id: policySetId,
+    }),
 }
 
 // ── Host Policy Assignments API ─────────────────────────────────────────────

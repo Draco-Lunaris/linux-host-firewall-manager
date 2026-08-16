@@ -1,59 +1,101 @@
-//! Deployment endpoint — deploy a policy set to hosts (creates FirewallJob).
+//! Deployment endpoint — assign a policy set to hosts/groups (pull model).
+//!
+//! There is no job or push layer: assigning a policy set here is the only apply
+//! path. The agent pulls its assigned policy on its next check-in and applies it.
+//! Preview returns the compiled backend commands the agent would run.
 
 use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
 use fw_auth::rbac::AuthUser;
-use fw_core::models::FirewallJob;
-use serde::Deserialize;
+use fw_core::models::{FirewallRule, FIREWALL_RULE_COLS_R};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::routes::policy_sets::{compile_firewalld_command, compile_ufw_command};
 use crate::AppState;
 
 pub fn router() -> Router<std::sync::Arc<AppState>> {
-    Router::new().route("/", post(deploy_policy_set))
+    Router::new()
+        .route("/assign", post(assign_policy_set))
+        .route("/unassign", post(unassign_policy_set))
+        .route("/preview", post(preview_assignment))
+}
+
+/// Resolve the effective set of host ids from explicit host ids plus group ids.
+async fn resolve_host_ids(
+    db: &sqlx::PgPool,
+    host_ids: &[Uuid],
+    group_ids: &[Uuid],
+) -> Result<Vec<Uuid>, fw_core::AppError> {
+    let mut ids: Vec<Uuid> = host_ids.to_vec();
+
+    if !group_ids.is_empty() {
+        let group_hosts: Vec<Uuid> =
+            sqlx::query_scalar("SELECT host_id FROM host_groups WHERE group_id = ANY($1)")
+                .bind(group_ids)
+                .fetch_all(db)
+                .await?;
+        ids.extend(group_hosts);
+    }
+
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
 }
 
 #[derive(Debug, Deserialize)]
-pub struct DeployRequest {
+pub struct AssignRequest {
     pub policy_set_id: Uuid,
     pub host_ids: Vec<Uuid>,
-    pub immediate: Option<bool>,
+    #[serde(default)]
+    pub group_ids: Vec<Uuid>,
 }
 
-#[derive(Debug, serde::Serialize)]
-pub struct DeployResponse {
-    pub job_id: Uuid,
-    pub host_count: usize,
-    pub status: String,
+#[derive(Debug, Serialize)]
+pub struct AssignResponse {
+    pub policy_set_id: Uuid,
+    pub assigned_count: usize,
+    pub host_ids: Vec<Uuid>,
 }
 
-async fn deploy_policy_set(
+async fn assign_policy_set(
     State(state): State<std::sync::Arc<AppState>>,
     auth: AuthUser,
-    Json(req): Json<DeployRequest>,
-) -> Result<(StatusCode, Json<DeployResponse>), fw_core::AppError> {
+    Json(req): Json<AssignRequest>,
+) -> Result<(StatusCode, Json<AssignResponse>), fw_core::AppError> {
     if !auth.role.can_write() {
         return Err(fw_core::AppError::Forbidden(
             "Write access required".to_string(),
         ));
     }
 
-    let immediate = req.immediate.unwrap_or(true);
-    let host_count = req.host_ids.len();
+    // SEC-003: a non-admin may not assign a policy set containing flagged
+    // (broad-allow) rules — those require admin approval.
+    if !auth.role.is_admin() {
+        let flagged = fw_core::policy::flagged_rule_ids_for_set(&state.db, req.policy_set_id)
+            .await
+            .map_err(fw_core::AppError::Database)?;
+        if !flagged.is_empty() {
+            return Err(fw_core::AppError::Conflict(format!(
+                "Policy set contains flagged rules requiring admin approval: {}",
+                flagged
+                    .iter()
+                    .map(|u| u.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+    }
 
-    // Create the job
-    let job: FirewallJob = sqlx::query_as(
-        "INSERT INTO firewall_jobs (kind, status, created_by_user_id, immediate, policy_set_id)
-         VALUES ('rule_apply', 'queued', $1, $2, $3) RETURNING *",
-    )
-    .bind(auth.user_id)
-    .bind(immediate)
-    .bind(req.policy_set_id)
-    .fetch_one(&state.db)
-    .await?;
+    let host_ids = resolve_host_ids(&state.db, &req.host_ids, &req.group_ids).await?;
+    if host_ids.is_empty() {
+        return Err(fw_core::AppError::BadRequest(
+            "No hosts selected".to_string(),
+        ));
+    }
 
-    // Create per-host entries
-    for host_id in &req.host_ids {
-        // Check operator scoping (SEC-012)
+    let mut assigned = 0usize;
+    for host_id in &host_ids {
+        // SEC-012: operators may only assign to hosts in their groups.
         let can_access = fw_auth::can_access_host(&state.db, &auth, *host_id)
             .await
             .unwrap_or(false);
@@ -64,45 +106,125 @@ async fn deploy_policy_set(
             )));
         }
 
-        sqlx::query(
-            "INSERT INTO firewall_job_hosts (job_id, host_id, status) VALUES ($1, $2, 'queued')",
+        let result = sqlx::query(
+            "INSERT INTO host_policy_assignments (host_id, policy_set_id, assigned_by)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (host_id, policy_set_id) DO NOTHING",
         )
-        .bind(job.id)
         .bind(host_id)
+        .bind(req.policy_set_id)
+        .bind(auth.user_id)
         .execute(&state.db)
         .await?;
+
+        if result.rows_affected() > 0 {
+            assigned += 1;
+        }
+
+        let _ = fw_core::audit::log_event(
+            &state.db,
+            "policy_assigned",
+            Some(auth.user_id),
+            Some(&auth.username),
+            Some("host"),
+            Some(&host_id.to_string()),
+            serde_json::json!({ "policy_set_id": req.policy_set_id }),
+            auth.ip.map(|ip| ip.to_string()).as_deref(),
+            None,
+        )
+        .await;
     }
 
-    // NOTIFY the worker
-    let _ = sqlx::query("SELECT pg_notify('job_enqueued', $1)")
-        .bind(job.id.to_string())
-        .execute(&state.db)
-        .await;
-
-    // Audit log
-    let _ = fw_core::audit::log_event(
-        &state.db,
-        "firewall_job_created",
-        Some(auth.user_id),
-        Some(&auth.username),
-        Some("job"),
-        Some(&job.id.to_string()),
-        serde_json::json!({
-            "policy_set_id": req.policy_set_id,
-            "host_count": host_count,
-            "immediate": immediate
-        }),
-        auth.ip.map(|ip| ip.to_string()).as_deref(),
-        None,
-    )
-    .await;
-
     Ok((
-        StatusCode::CREATED,
-        Json(DeployResponse {
-            job_id: job.id,
-            host_count,
-            status: "queued".to_string(),
+        StatusCode::OK,
+        Json(AssignResponse {
+            policy_set_id: req.policy_set_id,
+            assigned_count: assigned,
+            host_ids,
         }),
     ))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UnassignRequest {
+    pub policy_set_id: Uuid,
+    pub host_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub group_ids: Vec<Uuid>,
+}
+
+async fn unassign_policy_set(
+    State(state): State<std::sync::Arc<AppState>>,
+    auth: AuthUser,
+    Json(req): Json<UnassignRequest>,
+) -> Result<Json<serde_json::Value>, fw_core::AppError> {
+    if !auth.role.can_write() {
+        return Err(fw_core::AppError::Forbidden(
+            "Write access required".to_string(),
+        ));
+    }
+
+    let host_ids = resolve_host_ids(&state.db, &req.host_ids, &req.group_ids).await?;
+
+    for host_id in &host_ids {
+        sqlx::query(
+            "DELETE FROM host_policy_assignments WHERE host_id = $1 AND policy_set_id = $2",
+        )
+        .bind(host_id)
+        .bind(req.policy_set_id)
+        .execute(&state.db)
+        .await?;
+
+        let _ = fw_core::audit::log_event(
+            &state.db,
+            "policy_unassigned",
+            Some(auth.user_id),
+            Some(&auth.username),
+            Some("host"),
+            Some(&host_id.to_string()),
+            serde_json::json!({ "policy_set_id": req.policy_set_id }),
+            auth.ip.map(|ip| ip.to_string()).as_deref(),
+            None,
+        )
+        .await;
+    }
+
+    Ok(Json(serde_json::json!({
+        "policy_set_id": req.policy_set_id,
+        "unassigned_from": host_ids.len(),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PreviewRequest {
+    pub policy_set_id: Uuid,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PreviewResponse {
+    pub ufw_command: Vec<String>,
+    pub firewalld_command: Vec<String>,
+    pub rule_count: usize,
+}
+
+async fn preview_assignment(
+    State(state): State<std::sync::Arc<AppState>>,
+    _auth: AuthUser,
+    Json(req): Json<PreviewRequest>,
+) -> Result<Json<PreviewResponse>, fw_core::AppError> {
+    let rules: Vec<FirewallRule> = sqlx::query_as(&format!(
+        "SELECT {FIREWALL_RULE_COLS_R} FROM firewall_rules r
+         JOIN firewall_policy_set_rules psr ON psr.rule_id = r.id
+         WHERE psr.policy_set_id = $1
+         ORDER BY psr.rule_order, r.priority"
+    ))
+    .bind(req.policy_set_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(PreviewResponse {
+        ufw_command: rules.iter().map(compile_ufw_command).collect(),
+        firewalld_command: rules.iter().map(compile_firewalld_command).collect(),
+        rule_count: rules.len(),
+    }))
 }

@@ -18,12 +18,20 @@ pub struct DatabaseConfig {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    /// Port for the agent-facing mTLS API (mandatory client cert). The human UI
+    /// stays on `port` (443) with server-side TLS only.
+    #[serde(default = "default_agent_port")]
+    pub agent_port: u16,
     #[serde(default = "default_static_dir")]
     pub static_dir: String,
 }
 
 fn default_static_dir() -> String {
     "/usr/share/firewall-manager/frontend".to_string()
+}
+
+fn default_agent_port() -> u16 {
+    8443
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -52,17 +60,12 @@ fn default_web_tls_key_path() -> String {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkerConfig {
-    #[serde(default = "default_max_concurrent")]
-    pub max_concurrent_agent_calls: usize,
     #[serde(default = "default_health_poll")]
     pub health_poll_interval_secs: u64,
     #[serde(default = "default_drift_poll")]
     pub drift_poll_interval_secs: u64,
 }
 
-fn default_max_concurrent() -> usize {
-    64
-}
 fn default_health_poll() -> u64 {
     300
 }
@@ -73,7 +76,6 @@ fn default_drift_poll() -> u64 {
 impl Default for WorkerConfig {
     fn default() -> Self {
         Self {
-            max_concurrent_agent_calls: default_max_concurrent(),
             health_poll_interval_secs: default_health_poll(),
             drift_poll_interval_secs: default_drift_poll(),
         }

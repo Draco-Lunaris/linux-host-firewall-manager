@@ -49,13 +49,33 @@ pub async fn fleet_status_handler(State(state): State<Arc<AppState>>) -> Json<se
         .await
         .unwrap_or(0);
 
-    let total_jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM firewall_jobs")
+    let policy_sets: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM firewall_policy_sets")
         .fetch_one(&state.db)
         .await
         .unwrap_or(0);
 
-    let pending_jobs: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM firewall_jobs WHERE status IN ('queued', 'pending', 'running')",
+    // Hosts currently in drift: whose most recent drift_snapshot is a
+    // check-in mismatch (drifted) with no subsequent agent_report (apply /
+    // correction) after it. Unlike a rolling 24h "ever drifted" count, this
+    // drops to 0 the moment an agent self-corrects — it reflects current
+    // state, not history. The full drift history lives in `drift_snapshots`
+    // (surfaced via GET /api/v1/drift/snapshots) for investigating
+    // unauthorized changes.
+    let hosts_in_drift: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM ( \
+            SELECT DISTINCT ON (host_id) host_id, source \
+            FROM drift_snapshots ORDER BY host_id, captured_at DESC, id DESC \
+         ) latest WHERE latest.source = 'check_in_mismatch'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+
+    // Pull-model liveness: check-ins received in the last 15 minutes (default
+    // check-in interval). Zero means no agent has checked in recently.
+    let recent_check_ins: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_check_ins \
+         WHERE checked_in_at > NOW() - INTERVAL '15 minutes'",
     )
     .fetch_one(&state.db)
     .await
@@ -68,10 +88,8 @@ pub async fn fleet_status_handler(State(state): State<Arc<AppState>>) -> Json<se
         "unreachable": unreachable,
         "pending": pending,
         "total_rules": total_rules,
-        "total_jobs": total_jobs,
-        "pending_jobs": pending_jobs,
-        "compliance_pct": if total_hosts > 0 { 100.0 } else { 0.0 },
-        "total_pending_patches": 0,
-        "hosts_requiring_reboot": 0,
+        "policy_sets": policy_sets,
+        "hosts_in_drift": hosts_in_drift,
+        "recent_check_ins": recent_check_ins,
     }))
 }

@@ -27,13 +27,20 @@ async fn main() -> anyhow::Result<()> {
         fw_auth::jwt::load_verify_key(&config.security.jwt_verify_key_path)?,
         &config.security.ip_whitelist,
         &config.security.trusted_proxies,
+        // SEC-011: wire the pool so require_auth rejects revoked jtis.
+        Some(std::sync::Arc::new(db.clone())),
     ));
 
-    // Initialize CA
-    let ca = std::sync::Arc::new(fw_ca::CertAuthority::init(
-        "/etc/firewall-manager/ca".to_string(),
-        &db,
-    ));
+    // Initialize CA (generates + persists the root CA on first run)
+    let ca = std::sync::Arc::new(
+        fw_ca::CertAuthority::init("/etc/firewall-manager/ca".to_string(), &db).await?,
+    );
+
+    // Capture server config before the AppConfig is moved into state.
+    let agent_host = config.server.host.clone();
+    let agent_port = config.server.agent_port;
+    let agent_tls_cert_path = config.security.web_tls_cert_path.clone();
+    let agent_tls_key_path = config.security.web_tls_key_path.clone();
 
     let state = fw_web::AppState {
         db,
@@ -41,16 +48,60 @@ async fn main() -> anyhow::Result<()> {
         signing_key_pem,
         auth_config,
         ws_tickets: std::sync::Arc::new(dashmap::DashMap::new()),
-        ca,
+        ca: ca.clone(),
         approved_enrollments: std::sync::Arc::new(dashmap::DashMap::new()),
+        host_notify: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
+    // ── Agent mTLS listener (SEC-008) ────────────────────────────────────
+    // Serves only the agent API on a dedicated port with mandatory client-cert
+    // verification pinned to the manager CA. Reuses the manager's web TLS
+    // cert/key as the server identity. Requires TLS certs to be present.
+    let tls_cert = std::path::Path::new(&agent_tls_cert_path);
+    let tls_key = std::path::Path::new(&agent_tls_key_path);
+    if tls_cert.exists() && tls_key.exists() {
+        let server_cert_pem = std::fs::read_to_string(&agent_tls_cert_path)?;
+        let server_key_pem = std::fs::read_to_string(&agent_tls_key_path)?;
+        let agent_server_config = fw_web::agent_listener::build_agent_server_config(
+            ca.root_cert_pem(),
+            &server_cert_pem,
+            &server_key_pem,
+        )?;
+        let agent_addr: std::net::SocketAddr = format!("{}:{}", agent_host, agent_port)
+            .parse()
+            .expect("Invalid agent bind address");
+        let agent_listener =
+            fw_web::agent_listener::AgentTlsListener::new(agent_addr, agent_server_config).await?;
+        // Nest under /api/v1/agent so the routes match the agent client's URL
+        // construction ({manager_url}/api/v1/agent/check-in) and the URL handed to
+        // the agent at enrollment. The dedicated mTLS listener still owns these
+        // routes; the prefix is path-only and does not affect ConnectInfo/HostIdentity.
+        let agent_router = axum::Router::new()
+            .nest("/api/v1/agent", fw_web::routes::agent_api::router())
+            .with_state(std::sync::Arc::new(state.clone()));
+        tracing::info!(%agent_addr, "agent mTLS API listening (mandatory client cert)");
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(
+                agent_listener,
+                agent_router.into_make_service_with_connect_info::<fw_web::mtls::ClientCertInfo>(),
+            )
+            .await
+            {
+                tracing::error!(error = %e, "agent mTLS listener exited");
+            }
+        });
+    } else {
+        tracing::warn!(
+            "TLS certificates not found — agent mTLS API disabled. Provide web_tls_cert_path / web_tls_key_path to enable agent check-ins."
+        );
+    }
+
+    // ── Human UI listener (JWT-protected API + SPA) ───────────────────────
     let router = fw_web::build_router(state);
     let addr: std::net::SocketAddr = format!("{}:{}", config.server.host, config.server.port)
         .parse()
         .expect("Invalid bind address");
 
-    // Try to load TLS certificate and key; fall back to plain HTTP if missing.
     let tls_cert = std::path::Path::new(&config.security.web_tls_cert_path);
     let tls_key = std::path::Path::new(&config.security.web_tls_key_path);
 

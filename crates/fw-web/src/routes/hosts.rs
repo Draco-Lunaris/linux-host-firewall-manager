@@ -3,7 +3,7 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, get},
+    routing::{delete, get, post},
     Json, Router,
 };
 use fw_auth::rbac::AuthUser;
@@ -29,6 +29,36 @@ pub fn router() -> Router<std::sync::Arc<AppState>> {
             get(get_protected_cidrs).post(add_protected_cidr),
         )
         .route("/{id}/drift-snapshots", get(get_drift_snapshots))
+        .route("/{id}/force-check-in", post(force_check_in))
+        .route("/{id}/check-ins", get(get_check_ins))
+}
+
+/// Force a host to check in immediately (pull model). Signals the per-host
+/// `Notify` in `AppState::host_notify`; the agent's SSE subscription
+/// (`GET /api/v1/agent/events`, Stream 5) wakes and runs a cycle. If no SSE is
+/// currently held, the permit is stored and the next subscription returns at
+/// once. The manager never opens a connection to the agent. Returns 202.
+async fn force_check_in(
+    State(state): State<std::sync::Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    _auth: AuthUser,
+) -> Result<StatusCode, fw_core::AppError> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM hosts WHERE id = $1)")
+        .bind(id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(fw_core::AppError::Database)?;
+    if !exists {
+        return Err(fw_core::AppError::NotFound("Host not found".to_string()));
+    }
+    let notify = state
+        .host_notify
+        .entry(id)
+        .or_insert_with(|| std::sync::Arc::new(tokio::sync::Notify::new()))
+        .clone();
+    notify.notify_one();
+    tracing::info!(host_id = %id, "force-check-in signalled");
+    Ok(StatusCode::ACCEPTED)
 }
 
 async fn list_hosts(
@@ -39,12 +69,22 @@ async fn list_hosts(
         "SELECT h.id, h.fqdn, h.ip_address::text, h.display_name, h.os_family, h.os_name, h.arch,
                 h.agent_version, h.health_status::text, h.last_health_at, h.last_sync_at,
                 h.agent_port, h.notes, h.registered_at, h.updated_at,
-                latest.os_info->>'container_runtime' AS container_runtime
+                latest.os_info->>'container_runtime' AS container_runtime,
+                latest.backend_type AS backend_type,
+                latest.checked_in_at AS last_check_in,
+                ps.policy_set_name AS policy_set_name
          FROM hosts h
          LEFT JOIN LATERAL (
-             SELECT os_info FROM agent_check_ins
+             SELECT os_info, backend_type, checked_in_at FROM agent_check_ins
              WHERE host_id = h.id ORDER BY checked_in_at DESC LIMIT 1
          ) latest ON true
+         LEFT JOIN LATERAL (
+             SELECT ps.name AS policy_set_name
+             FROM host_policy_assignments hpa
+             JOIN firewall_policy_sets ps ON ps.id = hpa.policy_set_id
+             WHERE hpa.host_id = h.id
+             LIMIT 1
+         ) ps ON true
          ORDER BY h.fqdn",
     )
     .fetch_all(&state.db)
@@ -78,6 +118,12 @@ pub struct HostRow {
     pub registered_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub container_runtime: Option<String>,
+    /// Firewall backend reported on the host's latest check-in (e.g. ufw/firewalld).
+    pub backend_type: Option<String>,
+    /// Timestamp of the host's most recent check-in (pull-model liveness).
+    pub last_check_in: Option<chrono::DateTime<chrono::Utc>>,
+    /// Name of the policy set currently assigned to the host, if any.
+    pub policy_set_name: Option<String>,
 }
 
 async fn get_host(
@@ -260,6 +306,25 @@ async fn assign_policy_set(
             "Write access required".to_string(),
         ));
     }
+
+    // SEC-003: a non-admin may not assign a policy set containing flagged
+    // (broad-allow) rules — those require admin approval.
+    if !auth.role.is_admin() {
+        let flagged = fw_core::policy::flagged_rule_ids_for_set(&state.db, req.policy_set_id)
+            .await
+            .map_err(fw_core::AppError::Database)?;
+        if !flagged.is_empty() {
+            return Err(fw_core::AppError::Conflict(format!(
+                "Policy set contains flagged rules requiring admin approval: {}",
+                flagged
+                    .iter()
+                    .map(|u| u.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+    }
+
     sqlx::query(
         "INSERT INTO host_policy_assignments (host_id, policy_set_id, assigned_by) VALUES ($1, $2, $3) ON CONFLICT (host_id, policy_set_id) DO NOTHING",
     )
@@ -371,4 +436,36 @@ async fn get_drift_snapshots(
     .fetch_all(&state.db)
     .await?;
     Ok(Json(snapshots))
+}
+
+/// `GET /{id}/check-ins` — recent agent check-in records with apply results,
+/// for the host detail page's check-in/apply history. Pull model: each row is
+/// one agent check-in; `apply_*` columns record the outcome of the last apply.
+async fn get_check_ins(
+    State(state): State<std::sync::Arc<AppState>>,
+    _auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<CheckInRow>>, fw_core::AppError> {
+    let rows: Vec<CheckInRow> = sqlx::query_as(
+        "SELECT id, checked_in_at, rules_hash, agent_version, backend_type,
+                apply_success, apply_error, applied_rule_count, applied_at
+         FROM agent_check_ins WHERE host_id = $1 ORDER BY checked_in_at DESC LIMIT 25",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(rows))
+}
+
+#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+pub struct CheckInRow {
+    pub id: Uuid,
+    pub checked_in_at: chrono::DateTime<chrono::Utc>,
+    pub rules_hash: String,
+    pub agent_version: String,
+    pub backend_type: String,
+    pub apply_success: Option<bool>,
+    pub apply_error: Option<String>,
+    pub applied_rule_count: Option<i32>,
+    pub applied_at: Option<chrono::DateTime<chrono::Utc>>,
 }

@@ -1,6 +1,8 @@
 #![allow(clippy::type_complexity)]
 //! fw-web — Linux Host Firewall Manager web server (library crate).
 
+pub mod agent_listener;
+pub mod mtls;
 pub mod routes;
 pub mod secret_key;
 
@@ -85,6 +87,13 @@ pub struct AppState {
     pub ws_tickets: Arc<DashMap<String, WsTicket>>,
     pub ca: Arc<fw_ca::CertAuthority>,
     pub approved_enrollments: Arc<DashMap<String, ApprovedEntry>>,
+    /// Per-host force-check-in notifiers (SEC-008 pull model). An operator
+    /// `POST /hosts/{id}/force-check-in` calls `notify_one()` here; the agent's
+    /// long-lived SSE subscription to `GET /api/v1/agent/events` (Stream 5)
+    /// awaits the same `Notify` and runs a check-in cycle immediately. The
+    /// manager never opens a connection to the agent — the permit is stored if
+    /// no SSE is held, so the next subscription returns at once.
+    pub host_notify: Arc<DashMap<uuid::Uuid, Arc<tokio::sync::Notify>>>,
 }
 #[derive(Debug, Clone)]
 pub struct WsTicket {
@@ -149,13 +158,9 @@ pub fn build_router(state: AppState) -> Router<()> {
         .nest("/rules", routes::rules::router())
         .nest("/policy-sets", routes::policy_sets::router())
         .nest("/deployment", routes::deployment::router())
-        .nest("/jobs", routes::jobs::router())
-        .nest(
-            "/maintenance-windows",
-            routes::maintenance_windows::router(),
-        )
         .nest("/ca", routes::ca::router())
         .nest("/certificates", routes::certificates::router())
+        .nest("/drift", routes::drift::router())
         .nest("/settings", routes::settings::router())
         .nest("/admin", routes::enrollment::admin_router())
         .layer(GovernorLayer::new(api_governor))
@@ -166,7 +171,6 @@ pub fn build_router(state: AppState) -> Router<()> {
 
     Router::new()
         .route("/status/health", get(routes::health::health_handler))
-        .nest("/api/v1/agent", routes::agent_api::router())
         .nest("/api/v1/auth", auth_public_router)
         .nest("/api/v1", enrollment_router)
         .nest("/api/v1", protected_api)

@@ -18,11 +18,11 @@ import {
   Warning,
   Error as ErrorIcon,
   HourglassEmpty,
-  BugReport,
-  RestartAlt,
+  Description as RulesIcon,
+  Category as PolicySetIcon,
+  Sync as SyncIcon,
   Refresh as RefreshIcon,
   Security as SecurityIcon,
-  VerifiedUser as VerifiedUserIcon,
 } from '@mui/icons-material'
 import { fleetApi, certsApi } from '../api/client'
 import type { FleetStatus } from '../types'
@@ -170,20 +170,20 @@ export default function DashboardPage() {
             </Grid>
           </Grid>
 
-          {/* ── Row 2: Compliance bar ── */}
+          {/* ── Row 2: Fleet health bar ── */}
           <Card variant="outlined" sx={{ mb: 3 }}>
             <CardContent>
               <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
                 <Typography variant="subtitle1" fontWeight={600}>
-                  Compliance
+                  Fleet Health
                 </Typography>
                 <Typography variant="h6" fontWeight={700}>
-                  {status.compliance_pct.toFixed(1)}%
+                  {(status.total_hosts > 0 ? (status.healthy / status.total_hosts) * 100 : 0).toFixed(1)}%
                 </Typography>
               </Box>
               <LinearProgress
                 variant="determinate"
-                value={Math.min(status.compliance_pct, 100)}
+                value={Math.min(status.total_hosts > 0 ? (status.healthy / status.total_hosts) * 100 : 0, 100)}
                 sx={{
                   height: 12,
                   borderRadius: 6,
@@ -191,104 +191,55 @@ export default function DashboardPage() {
                   '& .MuiLinearProgress-bar': {
                     borderRadius: 6,
                     backgroundColor:
-                      status.compliance_pct >= 90
+                      status.total_hosts > 0 && status.healthy / status.total_hosts >= 0.9
                         ? '#2e7d32'
-                        : status.compliance_pct >= 70
+                        : status.total_hosts > 0 && status.healthy / status.total_hosts >= 0.7
                         ? '#ed6c02'
                         : '#d32f2f',
                   },
                 }}
               />
               <Typography variant="caption" color="text.secondary" mt={0.5} display="block">
-                {status.total_hosts} total host{status.total_hosts !== 1 ? 's' : ''} in fleet
+                {status.healthy} of {status.total_hosts} host{status.total_hosts !== 1 ? 's' : ''} healthy
               </Typography>
             </CardContent>
           </Card>
 
-          {/* ── Row 3: Patches + Reboot ── */}
+          {/* ── Row 3: Firewall pull-model metrics ── */}
           <Grid container spacing={2}>
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <Card variant="outlined">
-                <CardContent>
-                  <Box display="flex" alignItems="center" gap={1} mb={0.5}>
-                    <BugReport color="action" />
-                    <Typography variant="h5" fontWeight={700}>
-                      {status.total_pending_patches.toLocaleString()}
-                    </Typography>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary">
-                    Pending Patches
-                  </Typography>
-                </CardContent>
-              </Card>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+              <StatCard
+                title="Total Rules"
+                value={status.total_rules}
+                color="#1565c0"
+                icon={<RulesIcon sx={{ color: '#1565c0' }} />}
+              />
             </Grid>
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <Card variant="outlined">
-                <CardContent>
-                  <Box display="flex" alignItems="center" gap={1} mb={0.5}>
-                    <RestartAlt color="action" />
-                    <Typography variant="h5" fontWeight={700}>
-                      {status.hosts_requiring_reboot.toLocaleString()}
-                    </Typography>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary">
-                    Hosts Requiring Reboot
-                  </Typography>
-                </CardContent>
-              </Card>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+              <StatCard
+                title="Policy Sets"
+                value={status.policy_sets}
+                color="#6a1b9a"
+                icon={<PolicySetIcon sx={{ color: '#6a1b9a' }} />}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+              <StatCard
+                title="Hosts in Drift"
+                value={status.hosts_in_drift}
+                color={status.hosts_in_drift > 0 ? '#ed6c02' : '#2e7d32'}
+                icon={<Warning sx={{ color: status.hosts_in_drift > 0 ? '#ed6c02' : '#2e7d32' }} />}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+              <StatCard
+                title="Recent Check-ins (15m)"
+                value={status.recent_check_ins}
+                color={status.recent_check_ins > 0 ? '#2e7d32' : '#9e9e9e'}
+                icon={<SyncIcon sx={{ color: status.recent_check_ins > 0 ? '#2e7d32' : '#9e9e9e' }} />}
+              />
             </Grid>
           </Grid>
-
-          {/* ── Row 4: CRL Status ── */}
-          <Card variant="outlined" sx={{ mt: 3 }}>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                <VerifiedUserIcon color="primary" />
-                <Typography variant="subtitle1" fontWeight={600}>
-                  CRL Status
-                </Typography>
-              </Box>
-              <Grid container spacing={2}>
-                <Grid size={{ xs: 6, sm: 3 }}>
-                  <Box textAlign="center">
-                    <Typography variant="h5" fontWeight={700} sx={{ color: '#2e7d32' }}>
-                      {status.crl_valid}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">Valid</Typography>
-                  </Box>
-                </Grid>
-                <Grid size={{ xs: 6, sm: 3 }}>
-                  <Box textAlign="center">
-                    <Typography variant="h5" fontWeight={700} sx={{ color: '#ed6c02' }}>
-                      {status.crl_expired}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">Expired</Typography>
-                  </Box>
-                </Grid>
-                <Grid size={{ xs: 6, sm: 3 }}>
-                  <Box textAlign="center">
-                    <Typography variant="h5" fontWeight={700} sx={{ color: '#ed6c02' }}>
-                      {status.crl_missing}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">Missing</Typography>
-                  </Box>
-                </Grid>
-                <Grid size={{ xs: 6, sm: 3 }}>
-                  <Box textAlign="center">
-                    <Typography variant="h5" fontWeight={700} sx={{ color: '#d32f2f' }}>
-                      {status.crl_invalid}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">Invalid</Typography>
-                  </Box>
-                </Grid>
-              </Grid>
-              {status.crl_not_reporting > 0 && (
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                  {status.crl_not_reporting} host{status.crl_not_reporting !== 1 ? 's' : ''} not reporting CRL status
-                </Typography>
-              )}
-            </CardContent>
-          </Card>
         </Box>
       )}
     </Container>

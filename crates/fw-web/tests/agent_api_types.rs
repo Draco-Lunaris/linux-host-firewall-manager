@@ -38,7 +38,6 @@ mod tests {
                 config_version: 2,
             }),
             pending_actions: vec![],
-            agent_update: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"rules_changed\":true"));
@@ -114,16 +113,6 @@ mod tests {
         assert!(json.contains("\"name\":\"Allow SSH\""));
         assert!(json.contains("\"action\":\"allow\""));
         assert!(json.contains("\"dst_port_start\":22"));
-    }
-
-    #[test]
-    fn test_policy_query_deserialization() {
-        let json = r#"{"host_id": "550e8400-e29b-41d4-a716-446655440000"}"#;
-        let query: PolicyQuery = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            query.host_id,
-            Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()
-        );
     }
 
     #[test]

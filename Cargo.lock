@@ -1101,7 +1101,7 @@ dependencies = [
 
 [[package]]
 name = "fw-agent"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1114,6 +1114,7 @@ dependencies = [
  "hex",
  "hostname",
  "ipnet",
+ "libc",
  "rand 0.8.6",
  "rcgen",
  "reqwest",
@@ -1122,6 +1123,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "shlex",
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
@@ -1136,27 +1138,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "fw-agent-client"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "fw-core",
- "reqwest",
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-rustls",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "fw-auth"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "argon2",
  "async-trait",
@@ -1183,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "fw-ca"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1198,11 +1181,12 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
 name = "fw-core"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1230,22 +1214,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "fw-reports"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "fw-core",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "fw-web"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1256,17 +1226,16 @@ dependencies = [
  "base64",
  "chrono",
  "dashmap 6.2.1",
- "fw-agent-client",
  "fw-auth",
  "fw-ca",
  "fw-core",
- "fw-reports",
  "governor 0.6.3",
  "hex",
  "ipnet",
  "jsonwebtoken",
  "lettre",
  "rand 0.8.6",
+ "rcgen",
  "regex",
  "reqwest",
  "rustls",
@@ -1278,6 +1247,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-rustls",
+ "tokio-stream",
  "toml 0.8.23",
  "totp-rs",
  "tower",
@@ -1293,13 +1263,12 @@ dependencies = [
 
 [[package]]
 name = "fw-worker"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
  "dashmap 6.2.1",
- "fw-agent-client",
  "fw-auth",
  "fw-core",
  "lettre",
@@ -2053,7 +2022,7 @@ checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
 name = "migrate-secrets"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "aes-gcm",
  "anyhow",

@@ -7,7 +7,7 @@ use std::str::FromStr;
 
 pub fn router() -> Router<std::sync::Arc<AppState>> {
     Router::new()
-        .route("/", get(get_settings))
+        .route("/", get(get_settings).put(update_settings))
         .route(
             "/ip-whitelist",
             get(get_ip_whitelist).put(update_ip_whitelist),
@@ -20,11 +20,56 @@ pub fn router() -> Router<std::sync::Arc<AppState>> {
         .route("/smtp", get(get_smtp_config).put(update_smtp_config))
 }
 
+/// Read a system_config key as a JSON value, if present.
+async fn get_config_json(db: &sqlx::PgPool, key: &str) -> Option<serde_json::Value> {
+    let row: Option<String> = sqlx::query_scalar("SELECT value FROM system_config WHERE key = $1")
+        .bind(key)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten();
+    row.and_then(|s| serde_json::from_str(&s).ok())
+}
+
+/// Upsert a system_config key as a JSON string.
+async fn set_config(
+    db: &sqlx::PgPool,
+    key: &str,
+    value: &serde_json::Value,
+) -> Result<(), fw_core::AppError> {
+    let json = serde_json::to_string(value)
+        .map_err(|e| fw_core::AppError::Internal(format!("encode {key}: {e}")))?;
+    sqlx::query(
+        "INSERT INTO system_config (key, value, updated_at) VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()",
+    )
+    .bind(key)
+    .bind(&json)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// The fleet-wide check-in interval (seconds), set via the Settings UI and
+/// stored in `system_config` under `settings_polling.check_in_interval_secs`.
+/// Defaults to 900s. Used at enrollment so newly-enrolled hosts start on the
+/// global interval rather than a hardcoded default; existing hosts are
+/// pushed the value when it changes (see `update_settings`).
+pub(crate) async fn global_check_in_interval(db: &sqlx::PgPool) -> i32 {
+    get_config_json(db, "settings_polling")
+        .await
+        .and_then(|v| v.get("check_in_interval_secs").and_then(|n| n.as_i64()))
+        .map(|n| n.clamp(1, 86_400) as i32)
+        .unwrap_or(900)
+}
+
 async fn get_settings(
     State(state): State<std::sync::Arc<AppState>>,
     _auth: AuthUser,
 ) -> Result<Json<serde_json::Value>, fw_core::AppError> {
-    // Return a combined settings object that the frontend expects
+    // Combined settings object the frontend expects. Each section is persisted
+    // in system_config (written by PUT /settings); the hardcoded values are the
+    // defaults used before anything is saved.
     let ip_whitelist: Option<String> =
         sqlx::query_scalar("SELECT value FROM system_config WHERE key = 'ip_whitelist'")
             .fetch_optional(&state.db)
@@ -34,14 +79,116 @@ async fn get_settings(
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
 
+    let oidc = get_config_json(&state.db, "settings_oidc")
+        .await
+        .unwrap_or_else(|| serde_json::json!({ "enabled": false, "issuer": "", "client_id": "", "client_secret": "", "redirect_uri": "" }));
+    let smtp = get_config_json(&state.db, "settings_smtp")
+        .await
+        .unwrap_or_else(|| serde_json::json!({ "enabled": false, "host": "", "port": 587, "username": "", "password": "", "from": "", "tls_mode": "starttls" }));
+    let polling = get_config_json(&state.db, "settings_polling")
+        .await
+        .unwrap_or_else(|| serde_json::json!({ "check_in_interval_secs": 900 }));
+    let web_tls_strategy = get_config_json(&state.db, "settings_web_tls_strategy")
+        .await
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "internal_ca".to_string());
+    let notification = get_config_json(&state.db, "settings_notification")
+        .await
+        .unwrap_or_else(|| serde_json::json!({ "email_enabled": false, "webhook_enabled": false, "webhook_url": "" }));
+
     Ok(Json(serde_json::json!({
-        "oidc": { "enabled": false, "issuer": "", "client_id": "", "client_secret": "", "redirect_uri": "" },
-        "smtp": { "enabled": false, "host": "", "port": 587, "username": "", "password": "", "from": "", "tls_mode": "starttls" },
-        "polling": { "health_interval": 300, "drift_interval": 900 },
+        "oidc": oidc,
+        "smtp": smtp,
+        "polling": polling,
         "ip_whitelist": ip_list,
-        "web_tls_strategy": "internal_ca",
-        "notification": { "email_enabled": false, "webhook_enabled": false, "webhook_url": "" }
+        "web_tls_strategy": web_tls_strategy,
+        "notification": notification
     })))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct UpdateSettingsRequest {
+    pub oidc: Option<serde_json::Value>,
+    pub smtp: Option<serde_json::Value>,
+    pub polling: Option<serde_json::Value>,
+    pub ip_whitelist: Option<Vec<String>>,
+    pub web_tls_strategy: Option<String>,
+    pub notification: Option<serde_json::Value>,
+}
+
+/// `PUT /settings` — persist the combined settings the frontend's Save button
+/// sends. Each present section is upserted into system_config; returns the
+/// refreshed settings. Admin-only.
+async fn update_settings(
+    State(state): State<std::sync::Arc<AppState>>,
+    auth: AuthUser,
+    Json(req): Json<UpdateSettingsRequest>,
+) -> Result<Json<serde_json::Value>, fw_core::AppError> {
+    if !auth.role.is_admin() {
+        return Err(fw_core::AppError::Forbidden(
+            "Admin role required".to_string(),
+        ));
+    }
+
+    if let Some(v) = &req.ip_whitelist {
+        set_config(&state.db, "ip_whitelist", &serde_json::to_value(v).unwrap()).await?;
+    }
+    if let Some(v) = &req.oidc {
+        set_config(&state.db, "settings_oidc", v).await?;
+    }
+    if let Some(v) = &req.smtp {
+        set_config(&state.db, "settings_smtp", v).await?;
+    }
+    if let Some(v) = &req.polling {
+        set_config(&state.db, "settings_polling", v).await?;
+        // Propagate the global check-in interval to every host so enrolled
+        // agents pick it up on their next poll. The check-in handler reads
+        // `check_in_interval_secs` from `host_config_overrides` (per-host) and
+        // only sends a config update when `config_version` increases — so bump
+        // the version on the rows whose interval actually changes. Rows
+        // already at the new value are left alone (no needless re-push).
+        if let Some(interval) = v
+            .get("check_in_interval_secs")
+            .and_then(|n| n.as_i64())
+            .map(|n| n.clamp(1, 86_400) as i32)
+        {
+            sqlx::query(
+                "UPDATE host_config_overrides
+                 SET check_in_interval_secs = $1, config_version = config_version + 1
+                 WHERE check_in_interval_secs IS DISTINCT FROM $1",
+            )
+            .bind(interval)
+            .execute(&state.db)
+            .await
+            .map_err(fw_core::AppError::Database)?;
+        }
+    }
+    if let Some(v) = &req.web_tls_strategy {
+        set_config(
+            &state.db,
+            "settings_web_tls_strategy",
+            &serde_json::to_value(v).unwrap(),
+        )
+        .await?;
+    }
+    if let Some(v) = &req.notification {
+        set_config(&state.db, "settings_notification", v).await?;
+    }
+
+    let _ = fw_core::audit::log_event(
+        &state.db,
+        "config_changed",
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("system"),
+        Some("settings"),
+        serde_json::json!({}),
+        auth.ip.map(|ip| ip.to_string()).as_deref(),
+        None,
+    )
+    .await;
+
+    get_settings(State(state), auth).await
 }
 
 async fn get_ip_whitelist(
@@ -86,10 +233,10 @@ async fn update_ip_whitelist(
     // IP must be within at least one of the entries. This prevents an admin
     // from accidentally locking themselves out.
     if !validated.is_empty() {
-        let requester_ip = auth.ip.unwrap_or_else(|| {
-            // If we can't determine the IP, block the update as a safety measure
-            std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
-        });
+        // If we can't determine the IP, block the update as a safety measure.
+        let requester_ip = auth
+            .ip
+            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
 
         let covers_requester = validated.iter().any(|entry| {
             ipnet::IpNet::from_str(entry)

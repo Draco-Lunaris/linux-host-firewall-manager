@@ -12,13 +12,17 @@
 use axum::{
     extract::State,
     http::StatusCode,
+    response::sse::{Event, KeepAlive, KeepAliveStream, Sse},
     routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
+use crate::mtls::HostIdentity;
 use crate::AppState;
 
 pub fn router() -> Router<std::sync::Arc<AppState>> {
@@ -26,19 +30,99 @@ pub fn router() -> Router<std::sync::Arc<AppState>> {
         .route("/check-in", post(check_in))
         .route("/check-in/result", post(check_in_result))
         .route("/policy", get(get_policy))
+        // DB-free identity echo — used to verify mTLS host binding without a
+        // database, and handy for agent debugging.
+        .route("/whoami", get(whoami))
+        // Long-lived SSE subscription the agent holds between check-in cycles.
+        // A `POST /hosts/{id}/force-check-in` from an operator signals the
+        // per-host Notify; this endpoint wakes and emits a `check-in` event so
+        // the agent runs a cycle immediately. Held up to the host's check-in
+        // interval minus 30s, then the stream ends and the agent falls back to
+        // its normal sleep. The manager never opens a connection to the agent.
+        .route("/events", get(events))
+}
+
+/// Echo the host_id bound by the mTLS client certificate. No DB access.
+async fn whoami(host: HostIdentity) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "host_id": host.0 }))
+}
+
+/// `GET /events` — SSE stream of pull-model signals for this host.
+///
+/// The agent opens this after each check-in cycle and holds it up to the host's
+/// `check_in_interval - 30s`. An operator `POST /hosts/{id}/force-check-in`
+/// calls `notify_one()` on the per-host `Notify`; this handler wakes and emits
+/// a `check-in` event so the agent runs a cycle immediately. When the hold
+/// window expires the stream ends with a `timeout` event and the agent falls
+/// back to its normal sleep — purely additive, never breaks the base pull loop.
+async fn events(
+    State(state): State<std::sync::Arc<AppState>>,
+    host: HostIdentity,
+) -> Sse<KeepAliveStream<ReceiverStream<Result<Event, std::convert::Infallible>>>> {
+    let host_id = host.0;
+
+    // Hold for the host's configured interval minus 30s so the agent still
+    // sleeps normally when no signal arrives. Default 900s.
+    let interval_secs: i32 = sqlx::query_scalar(
+        "SELECT check_in_interval_secs FROM host_config_overrides WHERE host_id = $1",
+    )
+    .bind(host_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(900);
+    let hold_secs = (interval_secs - 30).max(30) as u64;
+
+    let notify = state
+        .host_notify
+        .entry(host_id)
+        .or_insert_with(|| std::sync::Arc::new(tokio::sync::Notify::new()))
+        .clone();
+
+    let (tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(8);
+    tokio::spawn(async move {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(hold_secs);
+        loop {
+            let notified = notify.notified();
+            tokio::pin!(notified);
+            tokio::select! {
+                _ = &mut notified => {
+                    if tx.send(Ok(Event::default().event("check-in").data("now")))
+                        .await.is_err() {
+                        break; // client disconnected
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    let _ = tx
+                        .send(Ok(Event::default().event("timeout").data("hold-expired")))
+                        .await;
+                    break;
+                }
+            }
+        }
+    });
+
+    Sse::new(ReceiverStream::new(rx)).keep_alive(KeepAlive::default())
 }
 
 // ── Request/Response types ──────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct CheckInRequest {
-    pub host_id: Uuid,
     pub rules_hash: String,
     pub agent_version: String,
     pub backend_type: String,
     pub os_info: serde_json::Value,
     pub uptime_seconds: i64,
     pub config_version: i32,
+    /// True when the agent detected its live firewall rules differ from the
+    /// ruleset it last applied (an out-of-band change). The manager records
+    /// an `out_of_band` drift snapshot for audit; the agent self-heals by
+    /// re-applying its cached last-applied rules, so no rules are sent for
+    /// this — `rules_changed` (below) only reflects a *policy* change.
+    #[serde(default)]
+    pub local_drift: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,7 +131,6 @@ pub struct CheckInResponse {
     pub rules: Vec<RuleDto>,
     pub config: Option<ConfigUpdate>,
     pub pending_actions: Vec<PendingActionDto>,
-    pub agent_update: Option<AgentUpdateInfo>,
 }
 
 #[derive(Debug, Serialize)]
@@ -86,16 +169,8 @@ pub struct PendingActionDto {
     pub reason: String,
 }
 
-#[derive(Debug, Serialize)]
-pub struct AgentUpdateInfo {
-    pub latest_version: String,
-    pub download_url: String,
-    pub checksum: Option<String>,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct CheckInResultRequest {
-    pub host_id: Uuid,
     pub action_id: Option<Uuid>,
     pub success: bool,
     pub error_message: Option<String>,
@@ -106,14 +181,16 @@ pub struct CheckInResultRequest {
 
 async fn check_in(
     State(state): State<std::sync::Arc<AppState>>,
+    host: HostIdentity,
     Json(req): Json<CheckInRequest>,
 ) -> Result<Json<CheckInResponse>, fw_core::AppError> {
+    let host_id = host.0;
     // Record the check-in
     sqlx::query(
         "INSERT INTO agent_check_ins (host_id, rules_hash, agent_version, backend_type, os_info, uptime_seconds, config_version)
          VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
-    .bind(req.host_id)
+    .bind(host_id)
     .bind(&req.rules_hash)
     .bind(&req.agent_version)
     .bind(&req.backend_type)
@@ -126,7 +203,7 @@ async fn check_in(
 
     // Update host health to healthy (check-in = alive)
     sqlx::query("UPDATE hosts SET health_status = 'healthy', last_health_at = NOW(), agent_version = $2 WHERE id = $1")
-        .bind(req.host_id)
+        .bind(host_id)
         .bind(&req.agent_version)
         .execute(&state.db)
         .await
@@ -135,15 +212,32 @@ async fn check_in(
     // Get the host's assigned policy set
     let policy_set_id: Option<Uuid> =
         sqlx::query_scalar("SELECT policy_set_id FROM host_policy_assignments WHERE host_id = $1")
-            .bind(req.host_id)
+            .bind(host_id)
             .fetch_optional(&state.db)
             .await
             .map_err(fw_core::AppError::Database)?;
 
-    // Compute expected rules hash from the assigned policy set
+    // Compute expected rules hash from the assigned policy set. Uses the
+    // shared field-based hash (fw_core::models::compute_rules_hash) so it
+    // matches the hash the agent reports for the rules it applied — the
+    // apples-to-apples comparison that lets a converged host stop re-applying.
     let (rules, expected_hash) = if let Some(ps_id) = policy_set_id {
         let rules = fetch_rules_for_policy_set(&state.db, ps_id).await?;
-        let hash = compute_rules_hash(&rules);
+        let hash = {
+            let parts: Vec<fw_core::models::RuleHashParts<'_>> = rules
+                .iter()
+                .map(|r| fw_core::models::RuleHashParts {
+                    id: &r.id,
+                    action: &r.action,
+                    direction: &r.direction,
+                    protocol: &r.protocol,
+                    src_cidr: r.src_cidr.as_deref(),
+                    dst_cidr: r.dst_cidr.as_deref(),
+                    dst_port_start: r.dst_port_start,
+                })
+                .collect();
+            fw_core::models::compute_rules_hash(&parts)
+        };
         (rules, hash)
     } else {
         (vec![], "empty".to_string())
@@ -158,7 +252,7 @@ async fn check_in(
             "INSERT INTO drift_snapshots (host_id, snapshot_hash, rule_count, source)
              VALUES ($1, $2, $3, 'check_in_mismatch')",
         )
-        .bind(req.host_id)
+        .bind(host_id)
         .bind(&req.rules_hash)
         .bind(rules.len() as i32)
         .execute(&state.db)
@@ -170,7 +264,7 @@ async fn check_in(
             None,
             None,
             Some("host"),
-            Some(&req.host_id.to_string()),
+            Some(&host_id.to_string()),
             serde_json::json!({
                 "agent_hash": req.rules_hash,
                 "expected_hash": expected_hash,
@@ -181,12 +275,40 @@ async fn check_in(
         .await;
     }
 
+    // If the agent detected an out-of-band change to its live rules, record
+    // it for the audit log. The agent self-heals by re-applying its cached
+    // last-applied rules, so this is informational — no rules are sent.
+    if req.local_drift {
+        let _ = sqlx::query(
+            "INSERT INTO drift_snapshots (host_id, snapshot_hash, rule_count, source)
+             VALUES ($1, $2, $3, 'out_of_band')",
+        )
+        .bind(host_id)
+        .bind(&req.rules_hash)
+        .bind(rules.len() as i32)
+        .execute(&state.db)
+        .await;
+
+        let _ = fw_core::audit::log_event(
+            &state.db,
+            "out_of_band_drift",
+            None,
+            None,
+            Some("host"),
+            Some(&host_id.to_string()),
+            serde_json::json!({ "agent_hash": req.rules_hash }),
+            None,
+            None,
+        )
+        .await;
+    }
+
     // Get config overrides for this host
     let config: Option<ConfigUpdate> = sqlx::query_as::<_, HostConfigOverrideRow>(
-        "SELECT host_id, check_in_interval_secs, push_enabled, safe_mode_enabled, backend_override, config_version, updated_at
+        "SELECT check_in_interval_secs, push_enabled, safe_mode_enabled, backend_override, config_version
          FROM host_config_overrides WHERE host_id = $1",
     )
-    .bind(req.host_id)
+    .bind(host_id)
     .fetch_optional(&state.db)
     .await
     .map_err(fw_core::AppError::Database)?
@@ -208,7 +330,7 @@ async fn check_in(
          WHERE host_id = $1 AND status = 'queued' AND expires_at > NOW()
          ORDER BY priority DESC, created_at",
     )
-    .bind(req.host_id)
+    .bind(host_id)
     .fetch_all(&state.db)
     .await
     .map_err(fw_core::AppError::Database)?
@@ -231,22 +353,20 @@ async fn check_in(
             .map_err(fw_core::AppError::Database)?;
     }
 
-    // Agent update info (stub for now — will be wired to repo sync tables)
-    let agent_update = None;
-
     Ok(Json(CheckInResponse {
         rules_changed,
         rules: rules.into_iter().map(rule_to_dto).collect(),
         config,
         pending_actions,
-        agent_update,
     }))
 }
 
 async fn check_in_result(
     State(state): State<std::sync::Arc<AppState>>,
+    host: HostIdentity,
     Json(req): Json<CheckInResultRequest>,
 ) -> Result<StatusCode, fw_core::AppError> {
+    let host_id = host.0;
     if let Some(action_id) = req.action_id {
         // Update the pending action status
         if req.success {
@@ -279,7 +399,7 @@ async fn check_in_result(
             Some("pending_action"),
             Some(&action_id.to_string()),
             serde_json::json!({
-                "host_id": req.host_id,
+                "host_id": host_id,
                 "success": req.success,
                 "error": req.error_message,
             }),
@@ -294,7 +414,7 @@ async fn check_in_result(
         "INSERT INTO drift_snapshots (host_id, snapshot_hash, rule_count, source)
          VALUES ($1, $2, 0, 'agent_report')",
     )
-    .bind(req.host_id)
+    .bind(host_id)
     .bind(&req.new_rules_hash)
     .execute(&state.db)
     .await;
@@ -304,11 +424,12 @@ async fn check_in_result(
 
 async fn get_policy(
     State(state): State<std::sync::Arc<AppState>>,
-    axum::extract::Query(params): axum::extract::Query<PolicyQuery>,
+    host: HostIdentity,
 ) -> Result<Json<Vec<RuleDto>>, fw_core::AppError> {
+    let host_id = host.0;
     let policy_set_id: Option<Uuid> =
         sqlx::query_scalar("SELECT policy_set_id FROM host_policy_assignments WHERE host_id = $1")
-            .bind(params.host_id)
+            .bind(host_id)
             .fetch_optional(&state.db)
             .await
             .map_err(fw_core::AppError::Database)?;
@@ -324,20 +445,13 @@ async fn get_policy(
 
 // ── Helper types and functions ──────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
-pub struct PolicyQuery {
-    pub host_id: Uuid,
-}
-
 #[derive(Debug, sqlx::FromRow)]
 struct HostConfigOverrideRow {
-    host_id: Uuid,
     check_in_interval_secs: i32,
     push_enabled: bool,
     safe_mode_enabled: bool,
     backend_override: Option<String>,
     config_version: i32,
-    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -386,26 +500,6 @@ async fn fetch_rules_for_policy_set(
     .await
     .map_err(fw_core::AppError::Database)?;
     Ok(rules)
-}
-
-fn compute_rules_hash(rules: &[RuleRow]) -> String {
-    let mut hasher = Sha256::new();
-    for rule in rules {
-        hasher.update(rule.id.as_bytes());
-        hasher.update(rule.action.as_bytes());
-        hasher.update(rule.direction.as_bytes());
-        hasher.update(rule.protocol.as_bytes());
-        if let Some(ref cidr) = rule.src_cidr {
-            hasher.update(cidr.as_bytes());
-        }
-        if let Some(ref cidr) = rule.dst_cidr {
-            hasher.update(cidr.as_bytes());
-        }
-        if let Some(port) = rule.dst_port_start {
-            hasher.update(port.to_le_bytes());
-        }
-    }
-    hex::encode(hasher.finalize())
 }
 
 fn rule_to_dto(r: RuleRow) -> RuleDto {

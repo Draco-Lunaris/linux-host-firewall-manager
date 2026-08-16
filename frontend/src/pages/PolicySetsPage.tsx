@@ -5,7 +5,14 @@ import {
   AccordionDetails, List, ListItem, ListItemText, ListItemSecondaryAction,
   Chip, Divider,
 } from "@mui/material"
-import { Add as AddIcon, Edit as EditIcon, Delete as DeleteIcon, ExpandMore as ExpandMoreIcon, Code as CodeIcon } from "@mui/icons-material"
+import { Add as AddIcon, Edit as EditIcon, Delete as DeleteIcon, ExpandMore as ExpandMoreIcon, Code as CodeIcon, DragHandle as DragHandleIcon } from "@mui/icons-material"
+import {
+  DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent,
+} from "@dnd-kit/core"
+import {
+  SortableContext, arrayMove, useSortable, verticalListSortingStrategy,
+} from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 import { policySetsApi, type FirewallPolicySet, type FirewallRule, type PreviewCompilationResponse } from "../api/client"
 
 export default function PolicySetsPage() {
@@ -71,6 +78,31 @@ function PolicySetAccordion({ policySet, onEdit, onDelete }: { policySet: Firewa
     }
   }
 
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+  const [savingOrder, setSavingOrder] = useState(false)
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    setRules((items) => {
+      const oldIndex = items.findIndex((r) => r.id === active.id)
+      const newIndex = items.findIndex((r) => r.id === over.id)
+      if (oldIndex < 0 || newIndex < 0) return items
+      return arrayMove(items, oldIndex, newIndex)
+    })
+  }
+
+  const saveOrder = async () => {
+    setSavingOrder(true)
+    try {
+      await policySetsApi.reorder(policySet.id, rules.map((r) => r.id))
+    } catch (e: unknown) {
+      alert((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Failed to save order")
+    } finally {
+      setSavingOrder(false)
+    }
+  }
+
   useEffect(() => { if (expanded) loadRules() }, [expanded]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -100,20 +132,24 @@ function PolicySetAccordion({ policySet, onEdit, onDelete }: { policySet: Firewa
           </Box>
         )}
         <Divider sx={{ mb: 2 }} />
-        <List>
-          {rules.map((rule) => (
-            <ListItem key={rule.id}>
-              <ListItemText
-                primary={rule.name}
-                secondary={`${rule.action} ${rule.direction} ${rule.protocol} ${rule.src_cidr || "any"} → ${rule.dst_port_start || "any"}`}
-              />
-              <ListItemSecondaryAction>
-                <Chip label={rule.action} size="small" color={rule.action === "allow" ? "success" : "default"} />
-              </ListItemSecondaryAction>
-            </ListItem>
-          ))}
-          {rules.length === 0 && <Typography color="textSecondary">No rules in this policy set</Typography>}
-        </List>
+        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
+          <Typography variant="subtitle2">Rules (drag to reorder)</Typography>
+          {rules.length > 1 && (
+            <Button size="small" variant="outlined" disabled={savingOrder} onClick={saveOrder}>
+              {savingOrder ? "Saving..." : "Save Order"}
+            </Button>
+          )}
+        </Box>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={rules.map((r) => r.id)} strategy={verticalListSortingStrategy}>
+            <List>
+              {rules.map((rule) => (
+                <SortableRuleItem key={rule.id} rule={rule} />
+              ))}
+            </List>
+          </SortableContext>
+        </DndContext>
+        {rules.length === 0 && <Typography color="textSecondary">No rules in this policy set</Typography>}
       </AccordionDetails>
     </Accordion>
   )
@@ -150,5 +186,35 @@ function PolicySetDialog({ open, onClose, editingSet }: { open: boolean; onClose
         <Button variant="contained" onClick={handleSubmit} disabled={!name}>{editingSet ? "Update" : "Create"}</Button>
       </DialogActions>
     </Dialog>
+  )
+}
+
+function SortableRuleItem({ rule }: { rule: FirewallRule }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: rule.id })
+  return (
+    <ListItem
+      ref={setNodeRef}
+      sx={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        zIndex: isDragging ? 1 : "auto",
+        bgcolor: isDragging ? "action.hover" : "transparent",
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        mb: 0.5,
+      }}
+    >
+      <IconButton {...attributes} {...listeners} size="small" sx={{ cursor: "grab", mr: 1 }}>
+        <DragHandleIcon fontSize="small" />
+      </IconButton>
+      <ListItemText
+        primary={rule.name}
+        secondary={`${rule.action} ${rule.direction} ${rule.protocol} ${rule.src_cidr || "any"} → ${rule.dst_port_start || "any"}`}
+      />
+      <ListItemSecondaryAction>
+        <Chip label={rule.action} size="small" color={rule.action === "allow" ? "success" : "default"} />
+      </ListItemSecondaryAction>
+    </ListItem>
   )
 }

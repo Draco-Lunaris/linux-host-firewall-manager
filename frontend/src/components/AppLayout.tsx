@@ -10,17 +10,15 @@ import {
   Computer as HostsIcon,
   Group as GroupsIcon,
   Build as DeployIcon,
-  Assignment as JobsIcon,
-  Schedule as MaintenanceIcon,
   People as UsersIcon,
   VerifiedUser as CertsIcon,
-  Assessment as ReportsIcon,
   Settings as SettingsIcon,
   Menu as MenuIcon,
   Logout as LogoutIcon,
   Person as PersonIcon,
   Security as RulesIcon,
   Category as PolicySetIcon,
+  History as DriftIcon,
 } from '@mui/icons-material'
 import { useAuthStore } from '../store/authStore'
 
@@ -49,13 +47,7 @@ const navGroups: { heading: string; items: NavItem[] }[] = [
       { label: 'Rules', path: '/rules', icon: <RulesIcon />, writeOnly: true },
       { label: 'Policy Sets', path: '/policy-sets', icon: <PolicySetIcon />, writeOnly: true },
       { label: 'Deploy', path: '/deployment', icon: <DeployIcon />, writeOnly: true },
-    ],
-  },
-  {
-    heading: 'Operations',
-    items: [
-      { label: 'Jobs', path: '/jobs', icon: <JobsIcon /> },
-      { label: 'Maintenance', path: '/maintenance', icon: <MaintenanceIcon />, writeOnly: true },
+      { label: 'Drift Log', path: '/drift', icon: <DriftIcon /> },
     ],
   },
   {
@@ -63,7 +55,6 @@ const navGroups: { heading: string; items: NavItem[] }[] = [
     items: [
       { label: 'Users', path: '/users', icon: <UsersIcon />, adminOnly: true },
       { label: 'Certificates', path: '/certificates', icon: <CertsIcon /> },
-      { label: 'Reports', path: '/reports', icon: <ReportsIcon /> },
       { label: 'Settings', path: '/settings', icon: <SettingsIcon /> },
     ],
   },

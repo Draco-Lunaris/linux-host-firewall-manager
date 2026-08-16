@@ -3,12 +3,13 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use fw_auth::rbac::AuthUser;
 use fw_core::models::{
     FirewallAction, FirewallDirection, FirewallPolicySet, FirewallProtocol, FirewallRule,
+    FIREWALL_RULE_COLS_R,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -29,6 +30,7 @@ pub fn router() -> Router<std::sync::Arc<AppState>> {
             get(list_policy_set_rules).post(add_rule_to_set),
         )
         .route("/{id}/rules/{rule_id}", delete(remove_rule_from_set))
+        .route("/{id}/rules/reorder", put(reorder_rules))
         .route("/{id}/preview", post(preview_compilation))
 }
 
@@ -197,12 +199,12 @@ async fn list_policy_set_rules(
     _auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<PolicySetRulesResponse>, fw_core::AppError> {
-    let rules: Vec<FirewallRule> = sqlx::query_as(
-        "SELECT r.* FROM firewall_rules r
+    let rules: Vec<FirewallRule> = sqlx::query_as(&format!(
+        "SELECT {FIREWALL_RULE_COLS_R} FROM firewall_rules r
          JOIN firewall_policy_set_rules psr ON psr.rule_id = r.id
          WHERE psr.policy_set_id = $1
-         ORDER BY psr.rule_order, r.priority",
-    )
+         ORDER BY psr.rule_order, r.priority"
+    ))
     .bind(id)
     .fetch_all(&state.db)
     .await?;
@@ -287,6 +289,61 @@ async fn remove_rule_from_set(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct ReorderRulesRequest {
+    /// The policy set's rule IDs in their new desired order.
+    pub rule_ids: Vec<Uuid>,
+}
+
+/// `PUT /{id}/rules/reorder` — rewrite `rule_order` for every rule in the set
+/// to match the supplied order, in a single transaction.
+async fn reorder_rules(
+    State(state): State<std::sync::Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<ReorderRulesRequest>,
+) -> Result<StatusCode, fw_core::AppError> {
+    if !auth.role.can_write() {
+        return Err(fw_core::AppError::Forbidden(
+            "Write access required".to_string(),
+        ));
+    }
+
+    let mut tx = state
+        .db
+        .begin()
+        .await
+        .map_err(fw_core::AppError::Database)?;
+    for (order, rule_id) in req.rule_ids.iter().enumerate() {
+        sqlx::query(
+            "UPDATE firewall_policy_set_rules SET rule_order = $3
+             WHERE policy_set_id = $1 AND rule_id = $2",
+        )
+        .bind(id)
+        .bind(rule_id)
+        .bind(order as i32)
+        .execute(&mut *tx)
+        .await
+        .map_err(fw_core::AppError::Database)?;
+    }
+    tx.commit().await.map_err(fw_core::AppError::Database)?;
+
+    let _ = fw_core::audit::log_event(
+        &state.db,
+        "policy_set_changed",
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("policy_set"),
+        Some(&id.to_string()),
+        serde_json::json!({ "action": "rules_reordered", "count": req.rule_ids.len() }),
+        auth.ip.map(|ip| ip.to_string()).as_deref(),
+        None,
+    )
+    .await;
+
+    Ok(StatusCode::OK)
+}
+
 #[derive(Debug, Serialize)]
 pub struct PreviewCompilationResponse {
     pub ufw_commands: Vec<String>,
@@ -299,12 +356,12 @@ async fn preview_compilation(
     _auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<PreviewCompilationResponse>, fw_core::AppError> {
-    let rules: Vec<FirewallRule> = sqlx::query_as(
-        "SELECT r.* FROM firewall_rules r
+    let rules: Vec<FirewallRule> = sqlx::query_as(&format!(
+        "SELECT {FIREWALL_RULE_COLS_R} FROM firewall_rules r
          JOIN firewall_policy_set_rules psr ON psr.rule_id = r.id
          WHERE psr.policy_set_id = $1
-         ORDER BY psr.rule_order, r.priority",
-    )
+         ORDER BY psr.rule_order, r.priority"
+    ))
     .bind(id)
     .fetch_all(&state.db)
     .await?;
@@ -319,7 +376,7 @@ async fn preview_compilation(
     }))
 }
 
-fn compile_ufw_command(rule: &FirewallRule) -> String {
+pub(crate) fn compile_ufw_command(rule: &FirewallRule) -> String {
     let mut cmd = "ufw".to_string();
     match rule.action {
         FirewallAction::Allow => cmd.push_str(" allow"),
@@ -360,7 +417,7 @@ fn compile_ufw_command(rule: &FirewallRule) -> String {
     cmd
 }
 
-fn compile_firewalld_command(rule: &FirewallRule) -> String {
+pub(crate) fn compile_firewalld_command(rule: &FirewallRule) -> String {
     let action = match rule.action {
         FirewallAction::Allow => "accept",
         FirewallAction::Deny => "drop",
