@@ -138,21 +138,49 @@ async fn run_pull_cycle(
     interval_secs: &mut u32,
     config_version: &mut i32,
 ) -> Result<bool> {
-    // 1. Compute current rules hash from backend snapshot
+    // 1. Snapshot the live firewall rules. The live hash is used only for
+    //    local drift detection (out-of-band changes vs the last-applied
+    //    snapshot below). The hash we *report* to the manager is the
+    //    field-hash of the rules we last applied (see below), so the
+    //    manager's comparison is apples-to-apples and a converged host stops
+    //    re-applying every cycle.
     let snapshot = backend
         .snapshot()
         .await
         .context("Failed to get backend snapshot")?;
-    let rules_hash = snapshot.hash;
+    let live_hash = snapshot.hash;
+
+    // Reported rules_hash = the field-hash of the rules we last applied
+    // (cached as last_good). Empty when we've never applied (the manager
+    // sends the policy on the first check-in). Recomputed from last_good
+    // each cycle so a daemon restart with an intact cache reports the
+    // matching hash and doesn't trigger a needless re-apply.
+    let reported_rules_hash = crate::safe_mode::load_last_good()
+        .map(|applied| {
+            let parts: Vec<fw_core::models::RuleHashParts<'_>> = applied
+                .iter()
+                .map(|r| fw_core::models::RuleHashParts {
+                    id: &r.id,
+                    action: r.action.as_str(),
+                    direction: r.direction.as_str(),
+                    protocol: r.protocol.as_str(),
+                    src_cidr: r.src_cidr.as_deref(),
+                    dst_cidr: r.dst_cidr.as_deref(),
+                    dst_port_start: r.dst_port_start,
+                })
+                .collect();
+            fw_core::models::compute_rules_hash(&parts)
+        })
+        .unwrap_or_default();
 
     // Local drift: the live rules differ from the last-applied ruleset (someone
     // changed them out-of-band). Schedule an early check-in so the manager can
     // re-apply sooner. (The manager also detects this via check_in_mismatch.)
     let local_drift = match crate::drift::load_expected_hash() {
-        Some(expected) if expected != rules_hash => {
+        Some(expected) if expected != live_hash => {
             tracing::warn!(
                 expected = %expected,
-                actual = %rules_hash,
+                actual = %live_hash,
                 "Local drift detected — live rules differ from last applied; scheduling early check-in"
             );
             true
@@ -171,12 +199,13 @@ async fn run_pull_cycle(
     // 3. Call check-in
     let req = CheckInRequest {
         host_id,
-        rules_hash: rules_hash.clone(),
+        rules_hash: reported_rules_hash.clone(),
         agent_version: env!("CARGO_PKG_VERSION").to_string(),
         backend_type: backend.name().to_string(),
         os_info,
         uptime_seconds: uptime,
         config_version: *config_version,
+        local_drift,
         agent_binary_hash: agent_binary_hash(),
     };
 
@@ -236,16 +265,42 @@ async fn run_pull_cycle(
         }
     }
 
-    // 5. Apply new rules if changed
-    if response.rules_changed && !response.rules.is_empty() {
-        tracing::info!(
-            rule_count = response.rules.len(),
-            "Rules changed, applying new ruleset"
-        );
-        let protected_cidrs = config.read().await.protected_cidrs.clone();
-        match apply_rules_from_dto(backend, &response.rules, &protected_cidrs).await {
+    // 5. Apply rules. Two triggers, each leading to a single apply:
+    //   - rules_changed: the manager's policy changed since we last applied
+    //     → apply the new ruleset the manager just sent.
+    //   - local_drift: our live rules differ from what we last applied (an
+    //     out-of-band change) → re-apply our cached last-applied ruleset
+    //     (self-heal), which is the current policy.
+    // In steady state (neither) we do nothing — no `ufw reset`, so no
+    // repeated network interruption when nothing has changed.
+    let apply_outcome: Option<Result<String>> =
+        if response.rules_changed && !response.rules.is_empty() {
+            tracing::info!(
+                rule_count = response.rules.len(),
+                "Rules changed, applying new ruleset"
+            );
+            let protected_cidrs = config.read().await.protected_cidrs.clone();
+            Some(apply_rules_from_dto(backend, &response.rules, &protected_cidrs).await)
+        } else if local_drift {
+            tracing::info!("Local drift detected — re-applying last-applied ruleset (self-heal)");
+            match crate::safe_mode::load_last_good() {
+                Ok(last_good) if !last_good.is_empty() => {
+                    let protected_cidrs = config.read().await.protected_cidrs.clone();
+                    Some(apply_rules(backend, &last_good, &protected_cidrs).await)
+                }
+                _ => {
+                    tracing::warn!("Local drift but no last-applied ruleset cached to re-apply");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+    if let Some(result) = apply_outcome {
+        match result {
             Ok(new_hash) => {
-                // Persist the last-applied hash for local drift detection (S6.3).
+                // Persist the last-applied hash for local drift detection.
                 let _ = crate::drift::save_expected_hash(&new_hash);
                 let result_req = CheckInResultRequest {
                     host_id,
@@ -265,7 +320,7 @@ async fn run_pull_cycle(
                     action_id: None,
                     success: false,
                     error_message: Some(e.to_string()),
-                    new_rules_hash: rules_hash.clone(),
+                    new_rules_hash: live_hash.clone(),
                 };
                 if let Err(e) = pull_client.report_result(&result_req).await {
                     tracing::warn!(error = %e, "Failed to report error to manager");
@@ -284,7 +339,7 @@ async fn run_pull_cycle(
                 action_id: Some(action.id),
                 success: true,
                 error_message: None,
-                new_rules_hash: rules_hash.clone(),
+                new_rules_hash: live_hash.clone(),
             };
             if let Err(e) = pull_client.report_result(&result_req).await {
                 tracing::warn!(error = %e, "Failed to ack replayed action to manager");
@@ -306,7 +361,7 @@ async fn run_pull_cycle(
             action_id: Some(action.id),
             success,
             error_message: error_msg,
-            new_rules_hash: rules_hash.clone(),
+            new_rules_hash: live_hash.clone(),
         };
         if let Err(e) = pull_client.report_result(&result_req).await {
             tracing::warn!(error = %e, "Failed to report action result to manager");

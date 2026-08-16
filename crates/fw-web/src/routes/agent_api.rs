@@ -17,7 +17,6 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -117,6 +116,13 @@ pub struct CheckInRequest {
     pub os_info: serde_json::Value,
     pub uptime_seconds: i64,
     pub config_version: i32,
+    /// True when the agent detected its live firewall rules differ from the
+    /// ruleset it last applied (an out-of-band change). The manager records
+    /// an `out_of_band` drift snapshot for audit; the agent self-heals by
+    /// re-applying its cached last-applied rules, so no rules are sent for
+    /// this — `rules_changed` (below) only reflects a *policy* change.
+    #[serde(default)]
+    pub local_drift: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -211,10 +217,27 @@ async fn check_in(
             .await
             .map_err(fw_core::AppError::Database)?;
 
-    // Compute expected rules hash from the assigned policy set
+    // Compute expected rules hash from the assigned policy set. Uses the
+    // shared field-based hash (fw_core::models::compute_rules_hash) so it
+    // matches the hash the agent reports for the rules it applied — the
+    // apples-to-apples comparison that lets a converged host stop re-applying.
     let (rules, expected_hash) = if let Some(ps_id) = policy_set_id {
         let rules = fetch_rules_for_policy_set(&state.db, ps_id).await?;
-        let hash = compute_rules_hash(&rules);
+        let hash = {
+            let parts: Vec<fw_core::models::RuleHashParts<'_>> = rules
+                .iter()
+                .map(|r| fw_core::models::RuleHashParts {
+                    id: &r.id,
+                    action: &r.action,
+                    direction: &r.direction,
+                    protocol: &r.protocol,
+                    src_cidr: r.src_cidr.as_deref(),
+                    dst_cidr: r.dst_cidr.as_deref(),
+                    dst_port_start: r.dst_port_start,
+                })
+                .collect();
+            fw_core::models::compute_rules_hash(&parts)
+        };
         (rules, hash)
     } else {
         (vec![], "empty".to_string())
@@ -246,6 +269,34 @@ async fn check_in(
                 "agent_hash": req.rules_hash,
                 "expected_hash": expected_hash,
             }),
+            None,
+            None,
+        )
+        .await;
+    }
+
+    // If the agent detected an out-of-band change to its live rules, record
+    // it for the audit log. The agent self-heals by re-applying its cached
+    // last-applied rules, so this is informational — no rules are sent.
+    if req.local_drift {
+        let _ = sqlx::query(
+            "INSERT INTO drift_snapshots (host_id, snapshot_hash, rule_count, source)
+             VALUES ($1, $2, $3, 'out_of_band')",
+        )
+        .bind(host_id)
+        .bind(&req.rules_hash)
+        .bind(rules.len() as i32)
+        .execute(&state.db)
+        .await;
+
+        let _ = fw_core::audit::log_event(
+            &state.db,
+            "out_of_band_drift",
+            None,
+            None,
+            Some("host"),
+            Some(&host_id.to_string()),
+            serde_json::json!({ "agent_hash": req.rules_hash }),
             None,
             None,
         )
@@ -449,26 +500,6 @@ async fn fetch_rules_for_policy_set(
     .await
     .map_err(fw_core::AppError::Database)?;
     Ok(rules)
-}
-
-fn compute_rules_hash(rules: &[RuleRow]) -> String {
-    let mut hasher = Sha256::new();
-    for rule in rules {
-        hasher.update(rule.id.as_bytes());
-        hasher.update(rule.action.as_bytes());
-        hasher.update(rule.direction.as_bytes());
-        hasher.update(rule.protocol.as_bytes());
-        if let Some(ref cidr) = rule.src_cidr {
-            hasher.update(cidr.as_bytes());
-        }
-        if let Some(ref cidr) = rule.dst_cidr {
-            hasher.update(cidr.as_bytes());
-        }
-        if let Some(port) = rule.dst_port_start {
-            hasher.update(port.to_le_bytes());
-        }
-    }
-    hex::encode(hasher.finalize())
 }
 
 fn rule_to_dto(r: RuleRow) -> RuleDto {

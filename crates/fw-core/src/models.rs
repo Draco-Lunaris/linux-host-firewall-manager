@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use sqlx::types::Json;
 use uuid::Uuid;
 
@@ -37,6 +38,16 @@ pub enum FirewallDirection {
     Forward,
 }
 
+impl FirewallDirection {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::In => "in",
+            Self::Out => "out",
+            Self::Forward => "forward",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "firewall_protocol", rename_all = "lowercase")]
 pub enum FirewallProtocol {
@@ -49,6 +60,22 @@ pub enum FirewallProtocol {
     Esp,
     Ah,
     Sctp,
+}
+
+impl FirewallProtocol {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Any => "any",
+            Self::Tcp => "tcp",
+            Self::Udp => "udp",
+            Self::Icmp => "icmp",
+            Self::Icmpv6 => "icmpv6",
+            Self::Gre => "gre",
+            Self::Esp => "esp",
+            Self::Ah => "ah",
+            Self::Sctp => "sctp",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
@@ -231,6 +258,51 @@ pub const FIREWALL_RULE_COLS_R: &str = "r.id, r.name, r.description, r.action, \
     r.src_port_end, r.dst_cidr::text AS dst_cidr, r.dst_port_start, \
     r.dst_port_end, r.interface_in, r.interface_out, r.comment, r.log, \
     r.priority, r.created_by, r.created_at, r.updated_at";
+
+// ============================================================
+// Drift hash — shared by the manager and the agent
+// ============================================================
+
+/// The canonical rule fields used to compute the drift hash. Both the
+/// manager (from the assigned policy rules) and the agent (from the rules it
+/// last applied) build these so the two sides hash the *same representation*
+/// — the agent reports this hash on check-in, not its backend's live-status
+/// text hash, so the comparison is apples-to-apples and converges.
+#[derive(Clone, Copy)]
+pub struct RuleHashParts<'a> {
+    pub id: &'a Uuid,
+    pub action: &'a str,
+    pub direction: &'a str,
+    pub protocol: &'a str,
+    pub src_cidr: Option<&'a str>,
+    pub dst_cidr: Option<&'a str>,
+    pub dst_port_start: Option<i32>,
+}
+
+/// SHA-256 over a ruleset's canonical fields (id, action, direction,
+/// protocol, src_cidr, dst_cidr, dst_port_start). Stable across the manager
+/// and the agent: the manager computes the *expected* hash of the assigned
+/// policy; the agent computes the hash of the rules it applied. Equal hashes
+/// ⇒ the agent is running the current policy ⇒ no re-apply.
+pub fn compute_rules_hash(rules: &[RuleHashParts<'_>]) -> String {
+    let mut hasher = sha2::Sha256::new();
+    for r in rules {
+        hasher.update(r.id.as_bytes());
+        hasher.update(r.action.as_bytes());
+        hasher.update(r.direction.as_bytes());
+        hasher.update(r.protocol.as_bytes());
+        if let Some(c) = r.src_cidr {
+            hasher.update(c.as_bytes());
+        }
+        if let Some(c) = r.dst_cidr {
+            hasher.update(c.as_bytes());
+        }
+        if let Some(p) = r.dst_port_start {
+            hasher.update(p.to_le_bytes());
+        }
+    }
+    hex::encode(hasher.finalize())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct FirewallPolicySet {

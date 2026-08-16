@@ -33,6 +33,11 @@ pub struct CheckInRequest {
     pub os_info: serde_json::Value,
     pub uptime_seconds: i64,
     pub config_version: i32,
+    /// True when the agent detected its live firewall rules differ from the
+    /// ruleset it last applied (an out-of-band change). The manager records
+    /// an `out_of_band` drift snapshot for audit; the agent self-heals by
+    /// re-applying its cached last-applied rules.
+    pub local_drift: bool,
     /// SHA-256 of the agent binary (current_exe), sent on check-in for
     /// integrity tracking (SEC-007 stub — real GPG verification is a follow-up;
     /// the manager currently ignores this field).

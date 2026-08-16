@@ -15,6 +15,7 @@ mod tests {
             os_info: serde_json::json!({"os": "ubuntu"}),
             uptime_seconds: 3600,
             config_version: 1,
+            local_drift: false,
             agent_binary_hash: None,
         };
         let json = serde_json::to_string(&req).unwrap();

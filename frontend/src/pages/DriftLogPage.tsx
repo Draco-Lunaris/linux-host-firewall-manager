@@ -43,7 +43,10 @@ function shortHash(h: string): string {
 
 function eventChip(source: string) {
   if (source === 'check_in_mismatch') {
-    return <Chip label="Drifted" color="warning" size="small" />
+    return <Chip label="Policy changed" color="warning" size="small" />
+  }
+  if (source === 'out_of_band') {
+    return <Chip label="Out-of-band" color="error" size="small" />
   }
   if (source === 'agent_report') {
     return <Chip label="Applied" color="info" size="small" variant="outlined" />
@@ -101,11 +104,12 @@ export default function DriftLogPage() {
       </Toolbar>
 
       <Alert severity="info" sx={{ mb: 3 }}>
-        Audit history of firewall-rule drift across the fleet. <strong>Drifted</strong> rows mark
-        check-ins where a host&apos;s live rules diverged from its assigned policy;{' '}
-        <strong>Applied</strong> rows mark rulesets the agent applied (often the self-correction
-        following a drift). Rows are retained indefinitely for investigating unauthorized or
-        out-of-band firewall changes.
+        Audit history of firewall-rule drift across the fleet. <strong>Out-of-band</strong> rows
+        mark check-ins where the agent detected its live rules were changed outside the manager
+        (the unauthorized changes worth investigating) and self-healed by re-applying policy;
+        <strong> Policy changed</strong> rows mark a policy update the agent had not yet applied;
+        <strong> Applied</strong> rows mark rulesets the agent applied. Rows are retained
+        indefinitely.
       </Alert>
 
       {error && (
@@ -131,7 +135,8 @@ export default function DriftLogPage() {
             onChange={(e: SelectChangeEvent) => setSourceFilter(e.target.value)}
           >
             <MenuItem value="all">All</MenuItem>
-            <MenuItem value="check_in_mismatch">Drifted</MenuItem>
+            <MenuItem value="out_of_band">Out-of-band</MenuItem>
+            <MenuItem value="check_in_mismatch">Policy changed</MenuItem>
             <MenuItem value="agent_report">Applied</MenuItem>
           </Select>
         </FormControl>
