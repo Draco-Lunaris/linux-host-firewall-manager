@@ -18,7 +18,9 @@ use crate::AppState;
 
 pub fn router() -> Router<std::sync::Arc<AppState>> {
     Router::new()
-        .route("/", get(list_rules).post(create_rule))
+        // Rule creation is group-scoped: POST /api/v1/rule-groups/{id}/rules.
+        // This endpoint lists/inspects/edits existing rules across all groups.
+        .route("/", get(list_rules))
         .route("/flagged", get(list_flagged_rules))
         .route("/{id}", get(get_rule).put(update_rule).delete(delete_rule))
         .route("/{id}/validate", post(validate_rule))
@@ -59,95 +61,6 @@ async fn list_flagged_rules(
         .filter(|r| fw_core::policy::check_rule(r).requires_approval)
         .collect();
     Ok(Json(flagged))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateRuleRequest {
-    pub name: String,
-    pub description: Option<String>,
-    pub action: FirewallAction,
-    pub direction: FirewallDirection,
-    pub protocol: FirewallProtocol,
-    pub src_cidr: Option<String>,
-    pub src_port_start: Option<i32>,
-    pub src_port_end: Option<i32>,
-    pub dst_cidr: Option<String>,
-    pub dst_port_start: Option<i32>,
-    pub dst_port_end: Option<i32>,
-    pub interface_in: Option<String>,
-    pub interface_out: Option<String>,
-    pub comment: Option<String>,
-    pub log: Option<bool>,
-    pub priority: Option<i32>,
-}
-
-async fn create_rule(
-    State(state): State<std::sync::Arc<AppState>>,
-    auth: AuthUser,
-    Json(req): Json<CreateRuleRequest>,
-) -> Result<(StatusCode, Json<FirewallRule>), fw_core::AppError> {
-    if !auth.role.can_write() {
-        return Err(fw_core::AppError::Forbidden(
-            "Write access required".to_string(),
-        ));
-    }
-
-    let rule = sqlx::query_as(&format!(
-        "INSERT INTO firewall_rules (name, description, action, direction, protocol, src_cidr, src_port_start, src_port_end, dst_cidr, dst_port_start, dst_port_end, interface_in, interface_out, comment, log, priority, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6::inet, $7, $8, $9::inet, $10, $11, $12, $13, $14, $15, $16, $17)
-         RETURNING {FIREWALL_RULE_COLS}"
-    ))
-    .bind(&req.name)
-    .bind(req.description.unwrap_or_default())
-    .bind(&req.action)
-    .bind(&req.direction)
-    .bind(&req.protocol)
-    .bind(&req.src_cidr)
-    .bind(req.src_port_start)
-    .bind(req.src_port_end)
-    .bind(&req.dst_cidr)
-    .bind(req.dst_port_start)
-    .bind(req.dst_port_end)
-    .bind(&req.interface_in)
-    .bind(&req.interface_out)
-    .bind(req.comment.unwrap_or_default())
-    .bind(req.log.unwrap_or(false))
-    .bind(req.priority.unwrap_or(1000))
-    .bind(auth.user_id)
-    .fetch_one(&state.db)
-    .await?;
-
-    // Run policy engine check (SEC-003)
-    let policy_result = check_rule(&rule);
-    let decision = if policy_result.requires_approval {
-        "flagged"
-    } else {
-        "auto_approved"
-    };
-    let _ = sqlx::query(
-        "INSERT INTO rule_policy_decisions (rule_id, decision, reason) VALUES ($1, $2, $3)",
-    )
-    .bind(rule.id)
-    .bind(decision)
-    .bind(&policy_result.reason)
-    .execute(&state.db)
-    .await;
-
-    // Audit log
-    let _ = fw_core::audit::log_event(
-        &state.db,
-        "rule_created",
-        Some(auth.user_id),
-        Some(&auth.username),
-        Some("rule"),
-        Some(&rule.id.to_string()),
-        serde_json::json!({ "name": rule.name, "policy_decision": decision }),
-        auth.ip.map(|ip| ip.to_string()).as_deref(),
-        None,
-    )
-    .await;
-
-    Ok((StatusCode::CREATED, Json(rule)))
 }
 
 async fn get_rule(

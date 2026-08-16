@@ -9,7 +9,6 @@ use axum::{
 use fw_auth::rbac::AuthUser;
 use fw_core::models::{
     FirewallAction, FirewallDirection, FirewallPolicySet, FirewallProtocol, FirewallRule,
-    FIREWALL_RULE_COLS_R,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -25,13 +24,19 @@ pub fn router() -> Router<std::sync::Arc<AppState>> {
                 .put(update_policy_set)
                 .delete(delete_policy_set),
         )
-        .route(
-            "/{id}/rules",
-            get(list_policy_set_rules).post(add_rule_to_set),
-        )
-        .route("/{id}/rules/{rule_id}", delete(remove_rule_from_set))
-        .route("/{id}/rules/reorder", put(reorder_rules))
+        // Compiled rules for the set (read-only — rules now come via groups).
+        .route("/{id}/rules", get(list_policy_set_rules))
         .route("/{id}/preview", post(preview_compilation))
+        // Rule-group membership (ordered) — the set is a list of rule groups.
+        .route(
+            "/{id}/rule-groups",
+            get(list_policy_set_groups).post(add_group_to_set),
+        )
+        .route("/{id}/rule-groups/reorder", put(reorder_groups))
+        .route(
+            "/{id}/rule-groups/{group_id}",
+            delete(remove_group_from_set),
+        )
 }
 
 #[derive(Debug, Serialize)]
@@ -194,35 +199,69 @@ pub struct PolicySetRulesResponse {
     pub rules: Vec<FirewallRule>,
 }
 
+/// `GET /{id}/rules` — the compiled, flattened rule list for the set (rules
+/// gathered from the set's rule groups in apply order). Read-only; manage
+/// membership via the `/rule-groups` endpoints.
 async fn list_policy_set_rules(
     State(state): State<std::sync::Arc<AppState>>,
     _auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<PolicySetRulesResponse>, fw_core::AppError> {
-    let rules: Vec<FirewallRule> = sqlx::query_as(&format!(
-        "SELECT {FIREWALL_RULE_COLS_R} FROM firewall_rules r
-         JOIN firewall_policy_set_rules psr ON psr.rule_id = r.id
-         WHERE psr.policy_set_id = $1
-         ORDER BY psr.rule_order, r.priority"
-    ))
-    .bind(id)
-    .fetch_all(&state.db)
-    .await?;
-
+    let rules = fw_core::policy::rules_for_policy_set(&state.db, id).await?;
     Ok(Json(PolicySetRulesResponse { rules }))
 }
 
-#[derive(Debug, serde::Deserialize)]
-pub struct AddRuleRequest {
-    pub rule_id: Uuid,
-    pub rule_order: Option<i32>,
+// ── Rule-group membership ───────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct PolicySetRuleGroup {
+    pub rule_group_id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub set_group_order: i32,
+    pub rule_count: i64,
 }
 
-async fn add_rule_to_set(
+#[derive(Debug, Serialize)]
+pub struct PolicySetRuleGroupsResponse {
+    pub rule_groups: Vec<PolicySetRuleGroup>,
+}
+
+/// `GET /{id}/rule-groups` — the rule groups included in the set, in apply order.
+async fn list_policy_set_groups(
+    State(state): State<std::sync::Arc<AppState>>,
+    _auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<PolicySetRuleGroupsResponse>, fw_core::AppError> {
+    let groups: Vec<PolicySetRuleGroup> = sqlx::query_as(
+        "SELECT psg.rule_group_id, g.name, g.description, psg.set_group_order,
+                (SELECT count(*) FROM firewall_rules r WHERE r.rule_group_id = g.id) AS rule_count
+         FROM firewall_policy_set_rule_groups psg
+         JOIN firewall_rule_groups g ON g.id = psg.rule_group_id
+         WHERE psg.policy_set_id = $1
+         ORDER BY psg.set_group_order",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(PolicySetRuleGroupsResponse {
+        rule_groups: groups,
+    }))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct AddGroupRequest {
+    pub rule_group_id: Uuid,
+    pub set_group_order: Option<i32>,
+}
+
+/// `POST /{id}/rule-groups` — include a rule group in the set (appended to the
+/// end if no order is given).
+async fn add_group_to_set(
     State(state): State<std::sync::Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
-    Json(req): Json<AddRuleRequest>,
+    Json(req): Json<AddGroupRequest>,
 ) -> Result<StatusCode, fw_core::AppError> {
     if !auth.role.can_write() {
         return Err(fw_core::AppError::Forbidden(
@@ -231,12 +270,13 @@ async fn add_rule_to_set(
     }
 
     sqlx::query(
-        "INSERT INTO firewall_policy_set_rules (policy_set_id, rule_id, rule_order) VALUES ($1, $2, $3)
-         ON CONFLICT (policy_set_id, rule_id) DO UPDATE SET rule_order = $3",
+        "INSERT INTO firewall_policy_set_rule_groups (policy_set_id, rule_group_id, set_group_order)
+         VALUES ($1, $2, COALESCE($3, (SELECT COALESCE(MAX(set_group_order), -1) + 1 FROM firewall_policy_set_rule_groups WHERE policy_set_id = $1)))
+         ON CONFLICT (policy_set_id, rule_group_id) DO UPDATE SET set_group_order = EXCLUDED.set_group_order",
     )
     .bind(id)
-    .bind(req.rule_id)
-    .bind(req.rule_order.unwrap_or(0))
+    .bind(req.rule_group_id)
+    .bind(req.set_group_order)
     .execute(&state.db)
     .await?;
 
@@ -247,7 +287,7 @@ async fn add_rule_to_set(
         Some(&auth.username),
         Some("policy_set"),
         Some(&id.to_string()),
-        serde_json::json!({ "action": "rule_added", "rule_id": req.rule_id }),
+        serde_json::json!({ "action": "rule_group_added", "rule_group_id": req.rule_group_id }),
         auth.ip.map(|ip| ip.to_string()).as_deref(),
         None,
     )
@@ -256,10 +296,11 @@ async fn add_rule_to_set(
     Ok(StatusCode::CREATED)
 }
 
-async fn remove_rule_from_set(
+/// `DELETE /{id}/rule-groups/{group_id}` — remove a rule group from the set.
+async fn remove_group_from_set(
     State(state): State<std::sync::Arc<AppState>>,
     auth: AuthUser,
-    Path((id, rule_id)): Path<(Uuid, Uuid)>,
+    Path((id, group_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, fw_core::AppError> {
     if !auth.role.can_write() {
         return Err(fw_core::AppError::Forbidden(
@@ -267,11 +308,13 @@ async fn remove_rule_from_set(
         ));
     }
 
-    sqlx::query("DELETE FROM firewall_policy_set_rules WHERE policy_set_id = $1 AND rule_id = $2")
-        .bind(id)
-        .bind(rule_id)
-        .execute(&state.db)
-        .await?;
+    sqlx::query(
+        "DELETE FROM firewall_policy_set_rule_groups WHERE policy_set_id = $1 AND rule_group_id = $2",
+    )
+    .bind(id)
+    .bind(group_id)
+    .execute(&state.db)
+    .await?;
 
     let _ = fw_core::audit::log_event(
         &state.db,
@@ -280,7 +323,7 @@ async fn remove_rule_from_set(
         Some(&auth.username),
         Some("policy_set"),
         Some(&id.to_string()),
-        serde_json::json!({ "action": "rule_removed", "rule_id": rule_id }),
+        serde_json::json!({ "action": "rule_group_removed", "rule_group_id": group_id }),
         auth.ip.map(|ip| ip.to_string()).as_deref(),
         None,
     )
@@ -290,18 +333,18 @@ async fn remove_rule_from_set(
 }
 
 #[derive(Debug, serde::Deserialize)]
-pub struct ReorderRulesRequest {
-    /// The policy set's rule IDs in their new desired order.
-    pub rule_ids: Vec<Uuid>,
+pub struct ReorderGroupsRequest {
+    /// The set's rule-group IDs in their new desired order.
+    pub rule_group_ids: Vec<Uuid>,
 }
 
-/// `PUT /{id}/rules/reorder` — rewrite `rule_order` for every rule in the set
-/// to match the supplied order, in a single transaction.
-async fn reorder_rules(
+/// `PUT /{id}/rule-groups/reorder` — rewrite `set_group_order` for every group
+/// in the set to match the supplied order, in a single transaction.
+async fn reorder_groups(
     State(state): State<std::sync::Arc<AppState>>,
     auth: AuthUser,
     Path(id): Path<Uuid>,
-    Json(req): Json<ReorderRulesRequest>,
+    Json(req): Json<ReorderGroupsRequest>,
 ) -> Result<StatusCode, fw_core::AppError> {
     if !auth.role.can_write() {
         return Err(fw_core::AppError::Forbidden(
@@ -314,13 +357,13 @@ async fn reorder_rules(
         .begin()
         .await
         .map_err(fw_core::AppError::Database)?;
-    for (order, rule_id) in req.rule_ids.iter().enumerate() {
+    for (order, group_id) in req.rule_group_ids.iter().enumerate() {
         sqlx::query(
-            "UPDATE firewall_policy_set_rules SET rule_order = $3
-             WHERE policy_set_id = $1 AND rule_id = $2",
+            "UPDATE firewall_policy_set_rule_groups SET set_group_order = $3
+             WHERE policy_set_id = $1 AND rule_group_id = $2",
         )
         .bind(id)
-        .bind(rule_id)
+        .bind(group_id)
         .bind(order as i32)
         .execute(&mut *tx)
         .await
@@ -335,7 +378,7 @@ async fn reorder_rules(
         Some(&auth.username),
         Some("policy_set"),
         Some(&id.to_string()),
-        serde_json::json!({ "action": "rules_reordered", "count": req.rule_ids.len() }),
+        serde_json::json!({ "action": "rule_groups_reordered", "count": req.rule_group_ids.len() }),
         auth.ip.map(|ip| ip.to_string()).as_deref(),
         None,
     )
@@ -356,15 +399,7 @@ async fn preview_compilation(
     _auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<PreviewCompilationResponse>, fw_core::AppError> {
-    let rules: Vec<FirewallRule> = sqlx::query_as(&format!(
-        "SELECT {FIREWALL_RULE_COLS_R} FROM firewall_rules r
-         JOIN firewall_policy_set_rules psr ON psr.rule_id = r.id
-         WHERE psr.policy_set_id = $1
-         ORDER BY psr.rule_order, r.priority"
-    ))
-    .bind(id)
-    .fetch_all(&state.db)
-    .await?;
+    let rules = fw_core::policy::rules_for_policy_set(&state.db, id).await?;
 
     let ufw_commands: Vec<String> = rules.iter().map(compile_ufw_command).collect();
     let firewalld_commands: Vec<String> = rules.iter().map(compile_firewalld_command).collect();

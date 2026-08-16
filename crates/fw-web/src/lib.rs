@@ -156,6 +156,7 @@ pub fn build_router(state: AppState) -> Router<()> {
         .nest("/groups", routes::groups::router())
         .nest("/users", routes::users::router())
         .nest("/rules", routes::rules::router())
+        .nest("/rule-groups", routes::rule_groups::router())
         .nest("/policy-sets", routes::policy_sets::router())
         .nest("/deployment", routes::deployment::router())
         .nest("/ca", routes::ca::router())

@@ -3,7 +3,7 @@ import {
   Box, Typography, Button, Paper, Dialog, DialogTitle, DialogContent,
   DialogActions, TextField, Alert, IconButton, Accordion, AccordionSummary,
   AccordionDetails, List, ListItem, ListItemText, ListItemSecondaryAction,
-  Chip, Divider,
+  Chip, Divider, MenuItem, Select, FormControl, InputLabel,
 } from "@mui/material"
 import { Add as AddIcon, Edit as EditIcon, Delete as DeleteIcon, ExpandMore as ExpandMoreIcon, Code as CodeIcon, DragHandle as DragHandleIcon } from "@mui/icons-material"
 import {
@@ -13,24 +13,25 @@ import {
   SortableContext, arrayMove, useSortable, verticalListSortingStrategy,
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
-import { policySetsApi, type FirewallPolicySet, type FirewallRule, type PreviewCompilationResponse } from "../api/client"
+import {
+  policySetsApi, ruleGroupsApi,
+  type FirewallPolicySet, type PolicySetRuleGroup, type FirewallRuleGroup,
+  type PreviewCompilationResponse,
+} from "../api/client"
 
 export default function PolicySetsPage() {
   const [policySets, setPolicySets] = useState<FirewallPolicySet[]>([])
-  
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingSet, setEditingSet] = useState<FirewallPolicySet | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const load = async () => {
-    
     try {
       const resp = await policySetsApi.list()
       setPolicySets(resp.data.policy_sets)
     } catch (e: unknown) {
       setError((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Failed to load policy sets")
     }
-    
   }
 
   useEffect(() => { load() }, [])
@@ -58,15 +59,19 @@ export default function PolicySetsPage() {
 }
 
 function PolicySetAccordion({ policySet, onEdit, onDelete }: { policySet: FirewallPolicySet; onEdit: () => void; onDelete: () => void }) {
-  const [rules, setRules] = useState<FirewallRule[]>([])
+  const [groups, setGroups] = useState<PolicySetRuleGroup[]>([])
+  const [allGroups, setAllGroups] = useState<FirewallRuleGroup[]>([])
   const [preview, setPreview] = useState<PreviewCompilationResponse | null>(null)
   const [expanded, setExpanded] = useState(false)
+  const [savingOrder, setSavingOrder] = useState(false)
+  const [addGroupId, setAddGroupId] = useState("")
 
-  const loadRules = async () => {
+  const loadGroups = async () => {
     try {
-      const resp = await policySetsApi.listRules(policySet.id)
-      setRules(resp.data.rules)
-    } catch {}
+      const [setResp, allResp] = await Promise.all([policySetsApi.listGroups(policySet.id), ruleGroupsApi.list()])
+      setGroups(setResp.data.rule_groups)
+      setAllGroups(allResp.data.rule_groups)
+    } catch { /* transient */ }
   }
 
   const handlePreview = async () => {
@@ -79,14 +84,13 @@ function PolicySetAccordion({ policySet, onEdit, onDelete }: { policySet: Firewa
   }
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
-  const [savingOrder, setSavingOrder] = useState(false)
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     if (!over || active.id === over.id) return
-    setRules((items) => {
-      const oldIndex = items.findIndex((r) => r.id === active.id)
-      const newIndex = items.findIndex((r) => r.id === over.id)
+    setGroups((items) => {
+      const oldIndex = items.findIndex((g) => g.rule_group_id === active.id)
+      const newIndex = items.findIndex((g) => g.rule_group_id === over.id)
       if (oldIndex < 0 || newIndex < 0) return items
       return arrayMove(items, oldIndex, newIndex)
     })
@@ -95,7 +99,8 @@ function PolicySetAccordion({ policySet, onEdit, onDelete }: { policySet: Firewa
   const saveOrder = async () => {
     setSavingOrder(true)
     try {
-      await policySetsApi.reorder(policySet.id, rules.map((r) => r.id))
+      await policySetsApi.reorderGroups(policySet.id, groups.map((g) => g.rule_group_id))
+      loadGroups()
     } catch (e: unknown) {
       alert((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Failed to save order")
     } finally {
@@ -103,14 +108,36 @@ function PolicySetAccordion({ policySet, onEdit, onDelete }: { policySet: Firewa
     }
   }
 
-  useEffect(() => { if (expanded) loadRules() }, [expanded]) // eslint-disable-line react-hooks/exhaustive-deps
+  const handleAdd = async () => {
+    if (!addGroupId) return
+    try {
+      await policySetsApi.addGroup(policySet.id, addGroupId)
+      setAddGroupId("")
+      loadGroups()
+    } catch (e: unknown) {
+      alert((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Failed to add group")
+    }
+  }
+
+  const handleRemove = async (groupId: string) => {
+    try {
+      await policySetsApi.removeGroup(policySet.id, groupId)
+      loadGroups()
+    } catch (e: unknown) {
+      alert((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Failed to remove group")
+    }
+  }
+
+  useEffect(() => { if (expanded) loadGroups() }, [expanded]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const availableToAdd = allGroups.filter((g) => !groups.some((sg) => sg.rule_group_id === g.id))
 
   return (
     <Accordion expanded={expanded} onChange={() => setExpanded(!expanded)} sx={{ mb: 1 }}>
       <AccordionSummary expandIcon={<ExpandMoreIcon />}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2, width: "100%" }}>
           <Typography variant="h6">{policySet.name}</Typography>
-          <Chip label={`${rules.length} rules`} size="small" />
+          <Chip label={`${groups.length} rule groups`} size="small" />
           <Box sx={{ flexGrow: 1 }} />
           <IconButton onClick={(e) => { e.stopPropagation(); onEdit() }}><EditIcon /></IconButton>
           <IconButton onClick={(e) => { e.stopPropagation(); onDelete() }}><DeleteIcon /></IconButton>
@@ -133,23 +160,35 @@ function PolicySetAccordion({ policySet, onEdit, onDelete }: { policySet: Firewa
         )}
         <Divider sx={{ mb: 2 }} />
         <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
-          <Typography variant="subtitle2">Rules (drag to reorder)</Typography>
-          {rules.length > 1 && (
+          <Typography variant="subtitle2">Rule Groups (drag to reorder apply order)</Typography>
+          {groups.length > 1 && (
             <Button size="small" variant="outlined" disabled={savingOrder} onClick={saveOrder}>
               {savingOrder ? "Saving..." : "Save Order"}
             </Button>
           )}
         </Box>
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={rules.map((r) => r.id)} strategy={verticalListSortingStrategy}>
+          <SortableContext items={groups.map((g) => g.rule_group_id)} strategy={verticalListSortingStrategy}>
             <List>
-              {rules.map((rule) => (
-                <SortableRuleItem key={rule.id} rule={rule} />
+              {groups.map((g) => (
+                <SortableGroupItem key={g.rule_group_id} group={g} onRemove={() => handleRemove(g.rule_group_id)} />
               ))}
             </List>
           </SortableContext>
         </DndContext>
-        {rules.length === 0 && <Typography color="textSecondary">No rules in this policy set</Typography>}
+        {groups.length === 0 && <Typography color="textSecondary" sx={{ mb: 1 }}>No rule groups in this policy set</Typography>}
+        <Box sx={{ display: "flex", gap: 1, mt: 1 }}>
+          <FormControl fullWidth size="small">
+            <InputLabel>Add rule group</InputLabel>
+            <Select value={addGroupId} label="Add rule group" onChange={(e) => setAddGroupId(e.target.value)}>
+              {availableToAdd.length === 0 && <MenuItem disabled value="">All groups already added</MenuItem>}
+              {availableToAdd.map((g) => (
+                <MenuItem key={g.id} value={g.id}>{g.name} ({g.rule_count} rules)</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={handleAdd} disabled={!addGroupId}>Add</Button>
+        </Box>
       </AccordionDetails>
     </Accordion>
   )
@@ -189,8 +228,8 @@ function PolicySetDialog({ open, onClose, editingSet }: { open: boolean; onClose
   )
 }
 
-function SortableRuleItem({ rule }: { rule: FirewallRule }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: rule.id })
+function SortableGroupItem({ group, onRemove }: { group: PolicySetRuleGroup; onRemove: () => void }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: group.rule_group_id })
   return (
     <ListItem
       ref={setNodeRef}
@@ -208,12 +247,10 @@ function SortableRuleItem({ rule }: { rule: FirewallRule }) {
       <IconButton {...attributes} {...listeners} size="small" sx={{ cursor: "grab", mr: 1 }}>
         <DragHandleIcon fontSize="small" />
       </IconButton>
-      <ListItemText
-        primary={rule.name}
-        secondary={`${rule.action} ${rule.direction} ${rule.protocol} ${rule.src_cidr || "any"} → ${rule.dst_port_start || "any"}`}
-      />
+      <ListItemText primary={group.name} secondary={group.description} />
       <ListItemSecondaryAction>
-        <Chip label={rule.action} size="small" color={rule.action === "allow" ? "success" : "default"} />
+        <Chip label={`${group.rule_count} rules`} size="small" sx={{ mr: 1 }} />
+        <IconButton size="small" onClick={onRemove}><DeleteIcon fontSize="small" /></IconButton>
       </ListItemSecondaryAction>
     </ListItem>
   )
