@@ -50,10 +50,17 @@ build:
 deps-deb:
     sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev libfontconfig1-dev dpkg-dev
 
-# build the .deb (cargo release + frontend + dpkg-deb); invoked via bash so the
-# committed executable mode is left untouched
-pkg-deb:
-    bash scripts/build-package.sh
+# build the manager .deb (fw-web, fw-worker, migrate-secrets, frontend,
+# migrations, config example, 3 manager systemd units)
+pkg-manager-deb:
+    bash scripts/build-manager-package.sh
+
+# build the agent .deb (fw-agent, firewall-agent.service)
+pkg-agent-deb:
+    bash scripts/build-agent-package.sh
+
+# build both .debs; legacy alias for older dev muscle memory
+pkg-deb: pkg-manager-deb pkg-agent-deb
 
 # --- version bump (helper for release) ---
 bump-version NEW OLD:

@@ -130,10 +130,10 @@ jobs:
           tool: just
       - run: just frontend-typecheck
 
-  # ── Build & Release (tag push only) ────────────────────────────────────────
+  # ── Build & Release (tag push only; two parallel jobs) ─────────────────────
 
-  build-and-release:
-    name: Build & Release
+  build-manager-deb:
+    name: Build Manager .deb
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [fmt, clippy, test, audit, gitleaks, frontend-lint, frontend-typecheck]
     runs-on: ubuntu-latest
@@ -153,7 +153,7 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       - run: just deps-deb
-      - run: just pkg-deb
+      - run: just pkg-manager-deb
       - name: Generate release notes
         id: release_notes
         run: |
@@ -166,8 +166,29 @@ jobs:
           echo "notes<<EOF" >> $GITHUB_OUTPUT
           echo "$NOTES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-      - name: Upload to GitHub Release
+      - name: Upload Manager .deb
         uses: softprops/action-gh-release@v3
         with:
           body: ${{ steps.release_notes.outputs.notes }}
-          files: linux-firewall-manager_*.deb
+          files: linux-firewall-manager_*[!g].deb
+
+  build-agent-deb:
+    name: Build Agent .deb
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [fmt, clippy, test, audit, gitleaks, frontend-lint, frontend-typecheck]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just deps-deb
+      - run: just pkg-agent-deb
+      - name: Upload Agent .deb
+        uses: softprops/action-gh-release@v3
+        with:
+          files: linux-firewall-manager-agent_*.deb

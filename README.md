@@ -95,6 +95,21 @@ sudo journalctl -u firewall-manager-web | grep 'INITIAL ADMIN PASSWORD' -A 4
 
 The admin password is generated on first start and shown once in the logs. Change it immediately after first login.
 
+### Installing the agent on a managed host
+
+The manager and agent ship as **separate `.deb` packages**. Install the
+agent on each host you want to centrally manage:
+
+```bash
+# On each managed host (not the manager host):
+sudo dpkg -i linux-firewall-manager-agent_<version>-1_amd64.deb
+sudo systemctl enable --now firewall-agent.service
+```
+
+The agent pulls its assigned policy from the manager over mTLS on a
+configurable interval (default ~15 min). It does **not** initiate contact
+with the manager; the manager never connects to the agent.
+
 ## License
 
 Apache License 2.0
