@@ -12,6 +12,7 @@ import {
   Add as AddIcon, Lock as LockIcon, Edit as EditIcon,
   VpnKey as VpnKeyIcon, Delete as DeleteIcon, Search as SearchIcon,
   Check as CheckIcon, Close as CloseIcon,
+  Visibility as VisibilityIcon, VisibilityOff as VisibilityOffIcon,
 } from '@mui/icons-material'
 import { usersApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
@@ -95,7 +96,9 @@ export default function UsersPage() {
 
   // Add User dialog
   const [addOpen, setAddOpen] = useState(false)
-  const [addForm, setAddForm] = useState({ username: '', display_name: '', email: '', role: 'operator', password: '' })
+  const [addForm, setAddForm] = useState({ username: '', display_name: '', email: '', role: 'operator', password: '', confirm_password: '' })
+  const [showAddPw, setShowAddPw] = useState(false)
+  const [showAddConfirmPw, setShowAddConfirmPw] = useState(false)
 
   // Edit User dialog
   const [editOpen, setEditOpen] = useState(false)
@@ -108,6 +111,8 @@ export default function UsersPage() {
   const [resetOpen, setResetOpen] = useState(false)
   const [resetUser, setResetUser] = useState<User | null>(null)
   const [resetForm, setResetForm] = useState({ new_password: '', confirm_password: '', force_password_reset: true })
+  const [showResetPw, setShowResetPw] = useState(false)
+  const [showResetConfirmPw, setShowResetConfirmPw] = useState(false)
 
   // MFA Disable confirmation dialog
   const [mfaConfirmOpen, setMfaConfirmOpen] = useState(false)
@@ -118,6 +123,7 @@ export default function UsersPage() {
   const [deleteUser, setDeleteUser] = useState<User | null>(null)
 
   const addPwValid = isPasswordValid(checkPasswordStrength(addForm.password))
+  const addPwMismatch = !!(addForm.confirm_password && addForm.password !== addForm.confirm_password)
   const resetPwValid = isPasswordValid(checkPasswordStrength(resetForm.new_password))
   const resetPwMismatch = !!(resetForm.confirm_password && resetForm.new_password !== resetForm.confirm_password)
 
@@ -156,6 +162,10 @@ export default function UsersPage() {
   // ── Handlers ────────────────────────────────────────────────────────────────
 
   const handleCreate = async () => {
+    if (addPwMismatch) {
+      showSnack('error', 'Passwords do not match')
+      return
+    }
     if (!addPwValid) {
       showSnack('error', 'Password does not meet strength requirements')
       return
@@ -163,7 +173,9 @@ export default function UsersPage() {
     try {
       await usersApi.create(addForm)
       setAddOpen(false)
-      setAddForm({ username: '', display_name: '', email: '', role: 'operator', password: '' })
+      setAddForm({ username: '', display_name: '', email: '', role: 'operator', password: '', confirm_password: '' })
+      setShowAddPw(false)
+      setShowAddConfirmPw(false)
       showSnack('success', 'User created successfully')
       load()
     } catch {
@@ -207,6 +219,8 @@ export default function UsersPage() {
   const openReset = (u: User) => {
     setResetUser(u)
     setResetForm({ new_password: '', confirm_password: '', force_password_reset: true })
+    setShowResetPw(false)
+    setShowResetConfirmPw(false)
     setResetOpen(true)
   }
 
@@ -274,7 +288,7 @@ export default function UsersPage() {
       <Toolbar disableGutters sx={{ mb: 2 }}>
         <Typography variant="h5" fontWeight={700} sx={{ flexGrow: 1 }}>Users</Typography>
         {isAdmin && (
-          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>Add User</Button>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => { setAddForm({ username: '', display_name: '', email: '', role: 'operator', password: '', confirm_password: '' }); setShowAddPw(false); setShowAddConfirmPw(false); setAddOpen(true) }}>Add User</Button>
         )}
       </Toolbar>
 
@@ -402,11 +416,35 @@ export default function UsersPage() {
             value={addForm.email}
             onChange={e => setAddForm({ ...addForm, email: e.target.value })}
             margin="normal" required />
-          <TextField fullWidth label="Password" type="password"
+          <TextField fullWidth label="Password" type={showAddPw ? 'text' : 'password'}
             value={addForm.password}
             onChange={e => setAddForm({ ...addForm, password: e.target.value })}
-            margin="normal" required />
+            margin="normal" required
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton size="small" onClick={() => setShowAddPw(!showAddPw)} edge="end">
+                    {showAddPw ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }} />
           <PasswordStrengthIndicator password={addForm.password} />
+          <TextField fullWidth label="Confirm Password" type={showAddConfirmPw ? 'text' : 'password'}
+            value={addForm.confirm_password}
+            onChange={e => setAddForm({ ...addForm, confirm_password: e.target.value })}
+            margin="normal" required
+            error={addPwMismatch}
+            helperText={addPwMismatch ? 'Passwords do not match' : ''}
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton size="small" onClick={() => setShowAddConfirmPw(!showAddConfirmPw)} edge="end">
+                    {showAddConfirmPw ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }} />
           <FormControl fullWidth sx={{ mt: 2 }}>
             <InputLabel>Role</InputLabel>
             <Select value={addForm.role} label="Role"
@@ -420,7 +458,7 @@ export default function UsersPage() {
         <DialogActions>
           <Button onClick={() => setAddOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={handleCreate}
-            disabled={!addForm.username || !addForm.email || !addForm.password || !addPwValid}>
+            disabled={!addForm.username || !addForm.email || !addForm.password || !addForm.confirm_password || !addPwValid || addPwMismatch}>
             Create
           </Button>
         </DialogActions>
@@ -523,19 +561,35 @@ export default function UsersPage() {
       <Dialog open={resetOpen} onClose={() => setResetOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>Reset Password for {resetUser?.username}</DialogTitle>
         <DialogContent>
-          <TextField fullWidth label="New Password" type="password"
+          <TextField fullWidth label="New Password" type={showResetPw ? 'text' : 'password'}
             value={resetForm.new_password}
             onChange={e => setResetForm({ ...resetForm, new_password: e.target.value })}
             margin="normal" required
-          />
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton size="small" onClick={() => setShowResetPw(!showResetPw)} edge="end">
+                    {showResetPw ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }} />
           <PasswordStrengthIndicator password={resetForm.new_password} />
-          <TextField fullWidth label="Confirm Password" type="password"
+          <TextField fullWidth label="Confirm Password" type={showResetConfirmPw ? 'text' : 'password'}
             value={resetForm.confirm_password}
             onChange={e => setResetForm({ ...resetForm, confirm_password: e.target.value })}
             margin="normal" required
             error={resetPwMismatch}
             helperText={resetPwMismatch ? 'Passwords do not match' : ''}
-          />
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton size="small" onClick={() => setShowResetConfirmPw(!showResetConfirmPw)} edge="end">
+                    {showResetConfirmPw ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }} />
           <FormControlLabel
             control={
               <Switch checked={resetForm.force_password_reset}
