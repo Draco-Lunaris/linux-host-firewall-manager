@@ -1,0 +1,20 @@
+#!/bin/bash
+set -euo pipefail
+
+# agent-postrm — linux-firewall-manager-agent
+# Runs after the package is removed.
+
+case "$1" in
+  purge)
+    # Remove agent state + config
+    rm -rf /etc/firewall-agent
+    rm -rf /var/log/firewall-agent
+
+    systemctl daemon-reload 2>/dev/null || true
+  ;;
+  remove)
+    systemctl daemon-reload 2>/dev/null || true
+  ;;
+esac
+
+exit 0

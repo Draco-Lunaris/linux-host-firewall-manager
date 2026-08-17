@@ -1,0 +1,39 @@
+#!/bin/bash
+set -euo pipefail
+
+# agent-postinst — linux-firewall-manager-agent
+# Runs after the agent .deb is installed or upgraded.
+
+case "$1" in
+  configure)
+    # Create state + config dirs (firewall-agent.service ReadWritePaths).
+    # Owned by root — the service runs as root for CAP_NET_ADMIN/CAP_NET_RAW.
+    mkdir -p /etc/firewall-agent
+    mkdir -p /var/log/firewall-agent
+
+    chmod 0750 /etc/firewall-agent
+    chmod 0750 /var/log/firewall-agent
+
+    # Reload systemd so the new firewall-agent.service is picked up
+    systemctl daemon-reload
+
+    echo ""
+    echo "=== linux-firewall-manager-agent installed ==="
+    echo ""
+    echo "Next steps:"
+    echo "  1. Configure the agent:"
+    echo "     sudo nano /etc/firewall-agent/agent.toml"
+    echo ""
+    echo "  2. Enroll with the manager (obtain an enrollment token from the"
+    echo "     manager web UI), then enable and start the service:"
+    echo "     sudo systemctl enable --now firewall-agent.service"
+    echo ""
+    echo "  3. Check status:"
+    echo "     journalctl -u firewall-agent -f"
+    echo ""
+  ;;
+  abort-upgrade|abort-remove|abort-deconfigure)
+  ;;
+esac
+
+exit 0

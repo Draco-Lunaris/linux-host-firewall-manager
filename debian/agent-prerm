@@ -1,0 +1,16 @@
+#!/bin/bash
+set -euo pipefail
+
+# agent-prerm — linux-firewall-manager-agent
+# Runs before the package is removed or upgraded.
+
+case "$1" in
+  remove)
+    systemctl stop firewall-agent.service 2>/dev/null || true
+  ;;
+  upgrade|deconfigure)
+    systemctl stop firewall-agent.service 2>/dev/null || true
+  ;;
+esac
+
+exit 0
