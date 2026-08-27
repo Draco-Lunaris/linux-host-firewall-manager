@@ -23,13 +23,11 @@
 
 ## Follow-ups (out of scope for the pull-model cleanup)
 1. Agent self-update mechanism — new design to replace the obsolete GPG-apt-repo rule.
-2. SEC-003 full second-admin approval queue (`ApprovedByAdmin` / `DeniedByAdmin` transitions);
-   the current pass only enforces a flagging gate at policy-assignment time.
-3. Atomic UFW apply via `iptables-save` / `iptables-restore` (replaces the current
+2. Atomic UFW apply via `iptables-save` / `iptables-restore` (replaces the current
    `ufw reset` + replay, which has a brief rules-cleared window).
-4. Real external audit anchoring (S3 Object Lock / RFC 3161 TSA) — the worker records anchors
+3. Real external audit anchoring (S3 Object Lock / RFC 3161 TSA) — the worker records anchors
    but does not yet verify them against an external store.
-5. Containerized integration tests (Ubuntu/UFW + Alma/firewalld) for the agent backends.
+4. Containerized integration tests (Ubuntu/UFW + Alma/firewalld) for the agent backends.
 
 ## Migrations
 - Migrations are SQL files in `migrations/`, numbered `NNN_description.sql`.
