@@ -146,6 +146,7 @@ pub enum CertStatus {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "auth_provider", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum AuthProvider {
     Local,
     AzureSso,
