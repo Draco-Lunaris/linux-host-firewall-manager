@@ -27,7 +27,9 @@
    `ufw reset` + replay, which has a brief rules-cleared window).
 3. Real external audit anchoring (S3 Object Lock / RFC 3161 TSA) — the worker records anchors
    but does not yet verify them against an external store.
-4. Containerized integration tests (Ubuntu/UFW + Alma/firewalld) for the agent backends.
+4. ~~Containerized integration tests (Ubuntu/UFW + Alma/firewalld) for the agent backends~~ —
+   **done**: `just itest` runs `crates/fw-agent/tests/container_backends.rs` (opt-in
+   `LHFM_CONTAINER_ITEST=1`, docker + `--cap-add=NET_ADMIN`; a CI job runs it at release time).
 
 ## Migrations
 - Migrations are SQL files in `migrations/`, numbered `NNN_description.sql`.

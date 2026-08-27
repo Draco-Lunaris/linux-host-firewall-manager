@@ -149,6 +149,46 @@ fn run_cmd(cmd: &str, args: &[&str]) -> (bool, String, String) {
     }
 }
 
+/// Run `ufw --force reset`, retrying when ufw aborts because its timestamped
+/// backup from a previous reset already exists. ufw backs each rules file up as
+/// `<name>.<YYYYMMDD_HHMMSS>` before clearing it and refuses to overwrite that
+/// file — so two resets within the same second (two applies in a row, e.g. a
+/// force-check-in right after a check-in) collide on the same backup names and
+/// fail. ufw makes several such backups per reset (before/after/user, + .v6),
+/// so the collision is cleared and the reset retried in a bounded loop.
+/// Removing the collided auto-backup is safe: it is ufw's own throwaway
+/// snapshot of the pre-reset state, not a referenced artifact.
+fn ufw_force_reset() -> (bool, String, String) {
+    let (mut ok, mut stdout, mut stderr) = run_cmd("ufw", &["--force", "reset"]);
+    for _ in 0..8 {
+        if ok {
+            break;
+        }
+        let Some(backup) = collided_ufw_backup(&stderr) else {
+            break;
+        };
+        tracing::warn!(backup, "removing stale ufw reset backup and retrying reset");
+        if std::fs::remove_file(&backup).is_err() {
+            break;
+        }
+        (ok, stdout, stderr) = run_cmd("ufw", &["--force", "reset"]);
+    }
+    (ok, stdout, stderr)
+}
+
+/// The backup path from a ufw reset collision error line, e.g.
+/// `ERROR: '/etc/ufw/before.rules.20260827_222613' already exists. Aborting`.
+fn collided_ufw_backup(stderr: &str) -> Option<String> {
+    stderr
+        .lines()
+        .find_map(|l| {
+            l.trim()
+                .strip_prefix("ERROR: '")
+                .and_then(|s| s.strip_suffix("' already exists. Aborting"))
+        })
+        .map(String::from)
+}
+
 // ============================================================
 // UFW Backend
 // ============================================================
@@ -214,7 +254,7 @@ impl FirewallBackend for UfwBackend {
         }
 
         // Reset
-        let (ok, _, err) = run_cmd("ufw", &["--force", "reset"]);
+        let (ok, _, err) = ufw_force_reset();
         if !ok {
             return Ok(ApplyResult {
                 applied: 0,
@@ -320,7 +360,7 @@ impl FirewallBackend for UfwBackend {
     }
 
     async fn reset(&self) -> Result<(), BackendError> {
-        let (ok, _, err) = run_cmd("ufw", &["--force", "reset"]);
+        let (ok, _, err) = ufw_force_reset();
         if !ok {
             return Err(BackendError::CommandFailed(err));
         }
@@ -328,7 +368,10 @@ impl FirewallBackend for UfwBackend {
     }
 
     async fn status(&self) -> Result<BackendStatus, BackendError> {
-        let (ok, stdout, _) = run_cmd("ufw", &["status"]);
+        // `verbose` is required for the Default: line — plain `ufw status` never
+        // prints the per-direction defaults, so the contains() checks below
+        // would always report allow/deny regardless of the real policy.
+        let (ok, stdout, _) = run_cmd("ufw", &["status", "verbose"]);
         let active = ok && stdout.contains("Status: active");
         let default_in = if stdout.contains("deny (incoming)") {
             "deny".to_string()
@@ -515,12 +558,16 @@ impl FirewallBackend for FirewalldBackend {
     }
 
     async fn reset(&self) -> Result<(), BackendError> {
-        // Reset to default zone
+        // Reset the public zone to its shipped defaults. `--remove-all` (the
+        // previous implementation) was never a valid firewall-cmd option, so
+        // reset always failed. `--load-zone-defaults` reports NO_DEFAULTS once
+        // the zone is already at its shipped config — treat that as success so
+        // reset is idempotent.
         let (ok, _, err) = run_cmd(
             "firewall-cmd",
-            &["--permanent", "--zone=public", "--remove-all"],
+            &["--permanent", "--load-zone-defaults=public"],
         );
-        if !ok {
+        if !ok && !err.contains("NO_DEFAULTS") {
             return Err(BackendError::CommandFailed(err));
         }
         let _ = run_cmd("firewall-cmd", &["--reload"]);
@@ -616,6 +663,17 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use uuid::Uuid;
+
+    #[test]
+    fn collided_ufw_backup_parses_reset_error_line() {
+        let stderr = "ERROR: '/etc/ufw/before.rules.20260827_222613' already exists. Aborting\n";
+        assert_eq!(
+            collided_ufw_backup(stderr),
+            Some("/etc/ufw/before.rules.20260827_222613".to_string())
+        );
+        assert_eq!(collided_ufw_backup("ERROR: something else"), None);
+        assert_eq!(collided_ufw_backup(""), None);
+    }
 
     fn allow_rule(name: &str) -> FirewallRule {
         FirewallRule {

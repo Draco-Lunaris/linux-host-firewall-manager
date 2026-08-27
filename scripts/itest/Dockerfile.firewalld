@@ -1,0 +1,30 @@
+# firewalld backend integration-test image (AGENTS.md follow-up #4).
+#
+# Same build stage as Dockerfile.ufw (glibc-compatible: bookworm 2.36 builds,
+# Alma 10 runs) so one compile serves both backend suites. The runtime stage
+# installs firewalld, which the inner tests start directly (no systemd in a
+# container): dbus-broker-launch --system, then firewalld --nofork --nopid.
+#
+# Build context is the repo root:
+#   docker build -q -f scripts/itest/Dockerfile.firewalld .
+#   docker run --rm --cap-add=NET_ADMIN -e LHFM_ITEST_INNER=1 <img> \
+#       lhfm-itest it_firewalld_ --test-threads=1 --nocapture
+
+# syntax=docker/dockerfile:1
+FROM rust:1-bookworm AS build
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY migrations ./migrations
+COPY crates ./crates
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    cargo build --tests -p fw-agent --test container_backends
+# The deps dir holds both the binary and its .d metadata, and a multi-source
+# COPY into a single path would create a directory — pick the executable only.
+RUN cp "$(find target/debug/deps -maxdepth 1 -name 'container_backends-*' ! -name '*.d' | head -1)" \
+    /build/lhfm-itest
+
+FROM almalinux:10
+RUN dnf install -y --setopt=install_weak_deps=False firewalld dbus-daemon procps-ng \
+    && dnf clean all
+COPY --from=build /build/lhfm-itest /usr/local/bin/lhfm-itest
+ENTRYPOINT ["lhfm-itest"]

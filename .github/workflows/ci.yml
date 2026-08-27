@@ -76,6 +76,19 @@ jobs:
       - run: just deps-deb
       - run: just test
 
+  itest:
+    name: Container Backend Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just deps-deb
+      - run: just itest
+
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
@@ -135,7 +148,7 @@ jobs:
   build-manager-deb:
     name: Build Manager .deb
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [fmt, clippy, test, audit, gitleaks, frontend-lint, frontend-typecheck]
+    needs: [fmt, clippy, test, itest, audit, gitleaks, frontend-lint, frontend-typecheck]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -175,7 +188,7 @@ jobs:
   build-agent-deb:
     name: Build Agent .deb
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [fmt, clippy, test, audit, gitleaks, frontend-lint, frontend-typecheck]
+    needs: [fmt, clippy, test, itest, audit, gitleaks, frontend-lint, frontend-typecheck]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
