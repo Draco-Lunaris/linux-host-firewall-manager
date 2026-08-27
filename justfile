@@ -23,6 +23,14 @@ clippy:
 test:
     cargo test --workspace --all-features --lib --bins --tests
 
+# Containerized UFW/firewalld backend integration tests (AGENTS.md follow-up
+# #4). Opt-in: needs docker (NET_ADMIN containers run the real `ufw reset` +
+# `firewalld` tooling). First run builds the itest images (~5 min); the cargo
+# registry is a BuildKit cache mount, so later runs only recompile workspace
+# crates.
+itest:
+    LHFM_CONTAINER_ITEST=1 cargo test -p fw-agent --test container_backends -- --nocapture
+
 audit:
     cargo audit
 
