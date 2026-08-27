@@ -28,10 +28,17 @@ async fn get_ca_info(
 }
 
 async fn get_crl(
-    State(_state): State<std::sync::Arc<AppState>>,
+    State(state): State<std::sync::Arc<AppState>>,
     _auth: AuthUser,
 ) -> Result<Json<serde_json::Value>, fw_core::AppError> {
-    Ok(Json(
-        serde_json::json!({ "crl_pem": null, "message": "CRL not yet implemented" }),
-    ))
+    // Generated on demand from the `certificates` table (same call the agent
+    // verifier and the public /api/v1/pki/crl.pem endpoint use); a small
+    // query at LHFM's scale. The same CRL is also available unauthenticated
+    // at /api/v1/pki/crl.pem for consumers without a manager login.
+    let crl_pem = state
+        .ca
+        .generate_crl(&state.db)
+        .await
+        .map_err(|e| fw_core::AppError::Internal(format!("CRL generation failed: {e}")))?;
+    Ok(Json(serde_json::json!({ "crl_pem": crl_pem })))
 }

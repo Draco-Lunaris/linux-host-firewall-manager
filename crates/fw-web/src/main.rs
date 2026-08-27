@@ -41,6 +41,26 @@ async fn main() -> anyhow::Result<()> {
     let agent_port = config.server.agent_port;
     let agent_sans = config.security.agent_tls_sans.clone();
 
+    // ── Agent mTLS acceptor (SEC-008) ────────────────────────────────────
+    // Built here (before AppState) and shared with the revoke endpoint, which
+    // hot-swaps it when a revocation refreshes the CRL the client verifier
+    // enforces. `None` while the listener is disabled.
+    let agent_acceptor: Option<fw_web::agent_listener::SharedTlsAcceptor> = if agent_sans.is_empty()
+    {
+        None
+    } else {
+        fw_web::agent_cert::ensure_agent_listener_cert(
+            &ca,
+            &config.security.agent_tls_cert_path,
+            &config.security.agent_tls_key_path,
+            &agent_sans,
+        )?;
+        let config_arc = fw_web::agent_cert::build_agent_tls_config(&ca, &db, &config).await?;
+        Some(std::sync::Arc::new(std::sync::RwLock::new(
+            tokio_rustls::TlsAcceptor::from(config_arc),
+        )))
+    };
+
     let state = fw_web::AppState {
         db,
         config: std::sync::Arc::new(config.clone()),
@@ -48,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
         auth_config,
         ws_tickets: std::sync::Arc::new(dashmap::DashMap::new()),
         ca: ca.clone(),
+        agent_tls_acceptor: agent_acceptor.clone(),
         approved_enrollments: std::sync::Arc::new(dashmap::DashMap::new()),
         host_notify: std::sync::Arc::new(dashmap::DashMap::new()),
     };
@@ -58,47 +79,38 @@ async fn main() -> anyhow::Result<()> {
     // CA — agents validate it against the cert they pin, which the self-signed
     // web cert (443) does not — so the manager issues its own listener cert at
     // startup (see agent_cert) instead of reusing the web cert.
-    if agent_sans.is_empty() {
-        tracing::warn!(
-            "agent_tls_sans is empty — agent mTLS API disabled. List the names/IPs agents use to reach the manager to enable agent check-ins."
-        );
-    } else {
-        fw_web::agent_cert::ensure_agent_listener_cert(
-            &ca,
-            &config.security.agent_tls_cert_path,
-            &config.security.agent_tls_key_path,
-            &agent_sans,
-        )?;
-        let server_cert_pem = std::fs::read_to_string(&config.security.agent_tls_cert_path)?;
-        let server_key_pem = std::fs::read_to_string(&config.security.agent_tls_key_path)?;
-        let agent_server_config = fw_web::agent_listener::build_agent_server_config(
-            ca.root_cert_pem(),
-            &server_cert_pem,
-            &server_key_pem,
-        )?;
-        let agent_addr: std::net::SocketAddr = format!("{}:{}", agent_host, agent_port)
-            .parse()
-            .expect("Invalid agent bind address");
-        let agent_listener =
-            fw_web::agent_listener::AgentTlsListener::new(agent_addr, agent_server_config).await?;
-        // Nest under /api/v1/agent so the routes match the agent client's URL
-        // construction ({manager_url}/api/v1/agent/check-in) and the URL handed to
-        // the agent at enrollment. The dedicated mTLS listener still owns these
-        // routes; the prefix is path-only and does not affect ConnectInfo/HostIdentity.
-        let agent_router = axum::Router::new()
-            .nest("/api/v1/agent", fw_web::routes::agent_api::router())
-            .with_state(std::sync::Arc::new(state.clone()));
-        tracing::info!(%agent_addr, "agent mTLS API listening (mandatory client cert)");
-        tokio::spawn(async move {
-            if let Err(e) = axum::serve(
-                agent_listener,
-                agent_router.into_make_service_with_connect_info::<fw_web::mtls::ClientCertInfo>(),
-            )
-            .await
-            {
-                tracing::error!(error = %e, "agent mTLS listener exited");
-            }
-        });
+    match agent_acceptor {
+        None => {
+            tracing::warn!(
+                "agent_tls_sans is empty — agent mTLS API disabled. List the names/IPs agents use to reach the manager to enable agent check-ins."
+            );
+        }
+        Some(acceptor) => {
+            let agent_addr: std::net::SocketAddr = format!("{}:{}", agent_host, agent_port)
+                .parse()
+                .expect("Invalid agent bind address");
+            let agent_listener =
+                fw_web::agent_listener::AgentTlsListener::new(agent_addr, acceptor).await?;
+            // Nest under /api/v1/agent so the routes match the agent client's URL
+            // construction ({manager_url}/api/v1/agent/check-in) and the URL handed to
+            // the agent at enrollment. The dedicated mTLS listener still owns these
+            // routes; the prefix is path-only and does not affect ConnectInfo/HostIdentity.
+            let agent_router = axum::Router::new()
+                .nest("/api/v1/agent", fw_web::routes::agent_api::router())
+                .with_state(std::sync::Arc::new(state.clone()));
+            tracing::info!(%agent_addr, "agent mTLS API listening (mandatory client cert)");
+            tokio::spawn(async move {
+                if let Err(e) = axum::serve(
+                    agent_listener,
+                    agent_router
+                        .into_make_service_with_connect_info::<fw_web::mtls::ClientCertInfo>(),
+                )
+                .await
+                {
+                    tracing::error!(error = %e, "agent mTLS listener exited");
+                }
+            });
+        }
     }
 
     // ── Human UI listener (JWT-protected API + SPA) ───────────────────────

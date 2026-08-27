@@ -127,6 +127,26 @@ fn restrict_key_permissions(path: &str) {
     let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
 }
 
+/// Build the agent-listener `ServerConfig`: the CA-signed agent cert, with a
+/// freshly generated CRL fed into the client verifier (revoked client certs
+/// are rejected at the TLS handshake). Used at startup and again on every
+/// revocation, when the rebuilt config is hot-swapped into the listener.
+pub async fn build_agent_tls_config(
+    ca: &fw_ca::CertAuthority,
+    db: &sqlx::PgPool,
+    config: &fw_core::config::AppConfig,
+) -> Result<std::sync::Arc<rustls::ServerConfig>, anyhow::Error> {
+    let crl_pem = ca.generate_crl(db).await?;
+    let server_cert_pem = std::fs::read_to_string(&config.security.agent_tls_cert_path)?;
+    let server_key_pem = std::fs::read_to_string(&config.security.agent_tls_key_path)?;
+    Ok(crate::agent_listener::build_agent_server_config(
+        ca.root_cert_pem(),
+        &server_cert_pem,
+        &server_key_pem,
+        std::slice::from_ref(&crl_pem),
+    )?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -53,6 +53,7 @@ name = "fw-web"
 path = "src/main.rs"
 
 [dev-dependencies]
+time = { workspace = true }
 rcgen = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true }

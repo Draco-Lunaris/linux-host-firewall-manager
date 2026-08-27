@@ -37,20 +37,30 @@ impl<'a> Connected<IncomingStream<'a, AgentTlsListener>> for ClientCertInfo {
     }
 }
 
+/// The swap point for the agent listener's TLS acceptor. Shared between the
+/// listener (read side) and the revoke endpoint (write side): regenerating the
+/// CRL rebuilds the client verifier, and the swap makes revocation take effect
+/// on the next handshake without restarting fw-web.
+pub type SharedTlsAcceptor = std::sync::Arc<std::sync::RwLock<TlsAcceptor>>;
+
+/// Replace the shared acceptor's config (e.g. after a CRL refresh).
+pub fn swap_shared_acceptor(shared: &SharedTlsAcceptor, server_config: Arc<ServerConfig>) {
+    if let Ok(mut acceptor) = shared.write() {
+        *acceptor = TlsAcceptor::from(server_config);
+    }
+}
+
 /// A `Listener` that performs a mandatory-mTLS handshake and carries the
 /// cert-bound host_id into each request.
 pub struct AgentTlsListener {
     tcp: TcpListener,
-    acceptor: TlsAcceptor,
+    acceptor: SharedTlsAcceptor,
 }
 
 impl AgentTlsListener {
-    pub async fn new(addr: SocketAddr, server_config: Arc<ServerConfig>) -> std::io::Result<Self> {
+    pub async fn new(addr: SocketAddr, acceptor: SharedTlsAcceptor) -> std::io::Result<Self> {
         let tcp = TcpListener::bind(addr).await?;
-        Ok(Self {
-            tcp,
-            acceptor: TlsAcceptor::from(server_config),
-        })
+        Ok(Self { tcp, acceptor })
     }
 }
 
@@ -68,7 +78,14 @@ impl Listener for AgentTlsListener {
                 }
             };
 
-            let tls_stream = match self.acceptor.accept(stream).await {
+            // TlsAcceptor is Arc-backed and cheap to clone; clone under the
+            // read lock so a concurrent swap doesn't hold it across the
+            // (async) handshake.
+            let acceptor = match self.acceptor.read() {
+                Ok(a) => a.clone(),
+                Err(_) => continue,
+            };
+            let tls_stream = match acceptor.accept(stream).await {
                 Ok(s) => s,
                 Err(e) => {
                     // No client cert (or otherwise invalid) => handshake rejected.
@@ -121,17 +138,43 @@ fn parse_host_id(cert: &CertificateDer<'_>) -> Option<Uuid> {
 
 /// Build the agent-listener `ServerConfig`: mandatory client-cert verification
 /// pinned to the manager CA root, plus the manager's own server cert/key.
+///
+/// `crl_pems` are PEM-encoded CRLs signed by the manager CA; a client cert
+/// whose serial appears in one of them fails the TLS handshake (revocation is
+/// enforced at the TLS layer — the cert *is* the identity). Unknown revocation
+/// status is allowed: certs issued before leaf persistence (migration 035) and
+/// the CA itself have no entry in the CRL, and failing those would lock out
+/// every pre-existing agent. Revoked = in-CRL is still enforced.
 pub fn build_agent_server_config(
     ca_root_pem: &str,
     server_cert_pem: &str,
     server_key_pem: &str,
+    crl_pems: &[String],
 ) -> Result<Arc<ServerConfig>, std::io::Error> {
     let mut roots = RootCertStore::empty();
     let mut ca_rd = ca_root_pem.as_bytes();
     for cert in rustls_pemfile::certs(&mut ca_rd) {
         roots.add(cert.map_err(io_err)?).map_err(io_err)?;
     }
+    // rustls wants DER; the CA hands out PEM.
+    let crls = crl_pems
+        .iter()
+        .map(
+            |pem| -> Result<
+                rustls::pki_types::CertificateRevocationListDer<'static>,
+                std::io::Error,
+            > {
+                Ok(rustls::pki_types::CertificateRevocationListDer::from(
+                    pem_to_der(pem)?,
+                ))
+            },
+        )
+        .collect::<Result<Vec<_>, _>>()?;
     let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
+        .with_crls(crls)
+        // Only reject certs the CRL explicitly revokes; an empty CRL (or a
+        // cert issued before persistence) must not fail the handshake.
+        .allow_unknown_revocation_status()
         .build()
         .map_err(|e| io_err(format!("client verifier build failed: {e}")))?;
 
@@ -153,4 +196,13 @@ pub fn build_agent_server_config(
 
 fn io_err<E: std::fmt::Display>(e: E) -> std::io::Error {
     std::io::Error::other(e.to_string())
+}
+
+/// Decode a single PEM block (e.g. `-----BEGIN X509 CRL-----`) to its DER bytes.
+fn pem_to_der(pem: &str) -> Result<Vec<u8>, std::io::Error> {
+    use base64::Engine as _;
+    let b64: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
+    base64::engine::general_purpose::STANDARD
+        .decode(b64.trim())
+        .map_err(|e| io_err(format!("invalid PEM base64: {e}")))
 }

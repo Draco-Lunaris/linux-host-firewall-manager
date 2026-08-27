@@ -16,6 +16,7 @@ rcgen = { workspace = true }
 pem = { workspace = true }
 time = { workspace = true }
 uuid = { workspace = true }
+hex = { workspace = true }
 rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
 tokio = { workspace = true }
