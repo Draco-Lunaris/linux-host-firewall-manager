@@ -39,8 +39,7 @@ async fn main() -> anyhow::Result<()> {
     // Capture server config before the AppConfig is moved into state.
     let agent_host = config.server.host.clone();
     let agent_port = config.server.agent_port;
-    let agent_tls_cert_path = config.security.web_tls_cert_path.clone();
-    let agent_tls_key_path = config.security.web_tls_key_path.clone();
+    let agent_sans = config.security.agent_tls_sans.clone();
 
     let state = fw_web::AppState {
         db,
@@ -55,13 +54,23 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Agent mTLS listener (SEC-008) ────────────────────────────────────
     // Serves only the agent API on a dedicated port with mandatory client-cert
-    // verification pinned to the manager CA. Reuses the manager's web TLS
-    // cert/key as the server identity. Requires TLS certs to be present.
-    let tls_cert = std::path::Path::new(&agent_tls_cert_path);
-    let tls_key = std::path::Path::new(&agent_tls_key_path);
-    if tls_cert.exists() && tls_key.exists() {
-        let server_cert_pem = std::fs::read_to_string(&agent_tls_cert_path)?;
-        let server_key_pem = std::fs::read_to_string(&agent_tls_key_path)?;
+    // verification pinned to the manager CA. The server cert must chain to that
+    // CA — agents validate it against the cert they pin, which the self-signed
+    // web cert (443) does not — so the manager issues its own listener cert at
+    // startup (see agent_cert) instead of reusing the web cert.
+    if agent_sans.is_empty() {
+        tracing::warn!(
+            "agent_tls_sans is empty — agent mTLS API disabled. List the names/IPs agents use to reach the manager to enable agent check-ins."
+        );
+    } else {
+        fw_web::agent_cert::ensure_agent_listener_cert(
+            &ca,
+            &config.security.agent_tls_cert_path,
+            &config.security.agent_tls_key_path,
+            &agent_sans,
+        )?;
+        let server_cert_pem = std::fs::read_to_string(&config.security.agent_tls_cert_path)?;
+        let server_key_pem = std::fs::read_to_string(&config.security.agent_tls_key_path)?;
         let agent_server_config = fw_web::agent_listener::build_agent_server_config(
             ca.root_cert_pem(),
             &server_cert_pem,
@@ -90,10 +99,6 @@ async fn main() -> anyhow::Result<()> {
                 tracing::error!(error = %e, "agent mTLS listener exited");
             }
         });
-    } else {
-        tracing::warn!(
-            "TLS certificates not found — agent mTLS API disabled. Provide web_tls_cert_path / web_tls_key_path to enable agent check-ins."
-        );
     }
 
     // ── Human UI listener (JWT-protected API + SPA) ───────────────────────

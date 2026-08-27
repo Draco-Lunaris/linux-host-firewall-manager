@@ -25,6 +25,8 @@ use uuid::Uuid;
 const CA_VALIDITY_YEARS: i64 = 10;
 /// The lifetime of an agent (host) cert issued from this CA.
 const HOST_CERT_VALIDITY_YEARS: i64 = 1;
+/// The lifetime of a server cert issued for the manager's own listeners.
+const SERVER_CERT_VALIDITY_YEARS: i64 = 1;
 
 pub struct CertAuthority {
     /// Filesystem base for ca.pem / ca.key.pem.
@@ -44,6 +46,13 @@ pub struct SignedCert {
     pub ca_chain: Vec<String>,
     /// CRL PEM, if any (deferred — None for now).
     pub crl_pem: Option<String>,
+}
+
+/// A CA-signed server cert for the manager's own listeners, with its fresh key.
+#[derive(Debug, Clone)]
+pub struct ServerCert {
+    pub cert_pem: String,
+    pub key_pem: String,
 }
 
 impl CertAuthority {
@@ -162,6 +171,62 @@ impl CertAuthority {
             cert_pem,
             ca_chain: vec![self.ca_cert_pem.clone()],
             crl_pem: None,
+        })
+    }
+
+    /// Issue a CA-signed server cert for one of the manager's own listeners.
+    ///
+    /// The manager generates a fresh keypair and signs a leaf cert with the
+    /// requested SANs (each entry is interpreted as an IP address if it parses
+    /// as one, otherwise as a DNS name) and the ServerAuth EKU. The agent pull
+    /// client validates the manager's server cert against the CA cert it pins,
+    /// so any listener the agents talk to must serve a cert from this CA —
+    /// the self-signed web cert does not chain to it.
+    pub fn issue_server_cert(
+        &self,
+        sans: &[String],
+    ) -> Result<ServerCert, crate::error::CertError> {
+        let key = KeyPair::generate().map_err(|e| crate::error::CertError::Rcgen(e.to_string()))?;
+
+        let mut params = CertificateParams::new(Vec::new())
+            .map_err(|e| crate::error::CertError::Rcgen(e.to_string()))?;
+        params
+            .distinguished_name
+            .push(DnType::CommonName, "Firewall Manager Agent API");
+        params
+            .distinguished_name
+            .push(DnType::OrganizationName, "Firewall Manager");
+        params.subject_alt_names = sans
+            .iter()
+            .map(|san| match san.parse::<std::net::IpAddr>() {
+                Ok(ip) => Ok(rcgen::SanType::IpAddress(ip)),
+                Err(_) => rcgen::Ia5String::try_from(san.as_str())
+                    .map(rcgen::SanType::DnsName)
+                    .map_err(|e| {
+                        crate::error::CertError::Rcgen(format!("invalid DNS SAN {san:?}: {e}"))
+                    }),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        params.key_usages = vec![
+            KeyUsagePurpose::DigitalSignature,
+            KeyUsagePurpose::KeyEncipherment,
+        ];
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        params.use_authority_key_identifier_extension = true;
+
+        let now = OffsetDateTime::now_utc();
+        params.not_before = now.checked_sub(Duration::days(1)).unwrap_or(now);
+        params.not_after = now
+            .checked_add(Duration::days(365 * SERVER_CERT_VALIDITY_YEARS))
+            .unwrap_or(now);
+
+        let cert = params
+            .signed_by(&key, &self.ca_cert, &self.ca_key)
+            .map_err(|e| crate::error::CertError::Rcgen(e.to_string()))?;
+
+        Ok(ServerCert {
+            cert_pem: cert.pem(),
+            key_pem: key.serialize_pem(),
         })
     }
 
