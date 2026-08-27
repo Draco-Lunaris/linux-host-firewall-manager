@@ -51,6 +51,12 @@ pub struct CheckInResponse {
     pub rules: Vec<RuleDto>,
     pub config: Option<ConfigUpdate>,
     pub pending_actions: Vec<PendingActionDto>,
+    /// Assigned policy set default input policy; None (absent/null) = system
+    /// default — the agent does not call `ufw default incoming`.
+    #[serde(default)]
+    pub default_input_policy: Option<String>,
+    #[serde(default)]
+    pub default_output_policy: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

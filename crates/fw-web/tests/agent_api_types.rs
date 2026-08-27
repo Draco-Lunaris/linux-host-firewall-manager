@@ -38,6 +38,8 @@ mod tests {
                 config_version: 2,
             }),
             pending_actions: vec![],
+            default_input_policy: None,
+            default_output_policy: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"rules_changed\":true"));

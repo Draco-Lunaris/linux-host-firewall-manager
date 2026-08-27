@@ -268,7 +268,19 @@ fn save_config(
     // after enrollment.
     if let Some(p) = pull {
         config.pull.check_in_interval_secs = p.check_in_interval_secs;
-        config.pull.manager_agent_url = p.manager_agent_url.clone();
+        // Normalize the manager URL to an IP so the agent has no runtime DNS
+        // dependency (required under a default-deny-outgoing policy set). Refuse
+        // to save an unresolvable or unspecified manager address rather than
+        // enroll a host that could later lock itself out.
+        config.pull.manager_agent_url = crate::protected_cidrs::normalize_manager_url_to_ip(
+            &p.manager_agent_url,
+        )
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "manager handed an unusable agent URL ({}): {e}",
+                p.manager_agent_url
+            )
+        })?;
         config.pull.config_version = p.config_version;
     }
     // Persist the manager-assigned host_id. `run_daemon` refuses to start

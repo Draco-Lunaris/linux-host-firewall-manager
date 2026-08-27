@@ -84,6 +84,42 @@ pub fn load_last_good_from(path: &str) -> anyhow::Result<Vec<FirewallRule>> {
     Ok(serde_json::from_str(&json)?)
 }
 
+// ── Last-applied default policies ──────────────────────────────────────────
+// Mirrors last_good: the agent caches the policy-set default policies it last
+// applied so it can (a) detect a defaults-only change and trigger an apply, and
+// (b) re-apply the same defaults during a local-drift self-heal. Stored as
+// JSON at /var/lib/firewall-agent/last_defaults.json. None = system default.
+
+const LAST_DEFAULTS_PATH: &str = "/var/lib/firewall-agent/last_defaults.json";
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct LastDefaults {
+    pub default_input_policy: Option<String>,
+    pub default_output_policy: Option<String>,
+}
+
+pub fn save_last_defaults(defaults: &LastDefaults) -> anyhow::Result<()> {
+    save_last_defaults_to(LAST_DEFAULTS_PATH, defaults)
+}
+
+pub fn save_last_defaults_to(path: &str, defaults: &LastDefaults) -> anyhow::Result<()> {
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string(defaults)?;
+    std::fs::write(path, json)?;
+    Ok(())
+}
+
+pub fn load_last_defaults() -> Option<LastDefaults> {
+    load_last_defaults_from(LAST_DEFAULTS_PATH)
+}
+
+pub fn load_last_defaults_from(path: &str) -> Option<LastDefaults> {
+    let json = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&json).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,5 +165,23 @@ mod tests {
         assert_eq!(loaded.len(), 2);
         assert_eq!(loaded[0].name, "ssh");
         assert_eq!(loaded[1].dst_port_start, Some(22));
+    }
+
+    #[test]
+    fn last_defaults_round_trips_and_defaults_when_absent() {
+        let dir = std::env::temp_dir().join(format!("fw-agent-ld-{}", Uuid::new_v4()));
+        let path = dir.join("last_defaults.json").to_string_lossy().to_string();
+        let d = super::LastDefaults {
+            default_input_policy: Some("deny".to_string()),
+            default_output_policy: Some("deny".to_string()),
+        };
+        save_last_defaults_to(&path, &d).unwrap();
+        let loaded = load_last_defaults_from(&path).unwrap();
+        assert_eq!(loaded.default_input_policy.as_deref(), Some("deny"));
+        assert_eq!(loaded.default_output_policy.as_deref(), Some("deny"));
+
+        // Absent file → None (Default).
+        let missing = dir.join("nope.json").to_string_lossy().to_string();
+        assert!(load_last_defaults_from(&missing).is_none());
     }
 }

@@ -8,7 +8,8 @@ use axum::{
 };
 use fw_auth::rbac::AuthUser;
 use fw_core::models::{
-    FirewallAction, FirewallDirection, FirewallPolicySet, FirewallProtocol, FirewallRule,
+    FirewallAction, FirewallDefaultPolicy, FirewallDirection, FirewallPolicySet, FirewallProtocol,
+    FirewallRule,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -61,6 +62,10 @@ async fn list_policy_sets(
 pub struct CreatePolicySetRequest {
     pub name: String,
     pub description: Option<String>,
+    /// Default input policy; None (absent/null) = system default.
+    pub default_input_policy: Option<FirewallDefaultPolicy>,
+    /// Default output policy; None (absent/null) = system default.
+    pub default_output_policy: Option<FirewallDefaultPolicy>,
 }
 
 async fn create_policy_set(
@@ -75,11 +80,14 @@ async fn create_policy_set(
     }
 
     let ps: FirewallPolicySet = sqlx::query_as(
-        "INSERT INTO firewall_policy_sets (name, description, created_by) VALUES ($1, $2, $3) RETURNING *",
+        "INSERT INTO firewall_policy_sets (name, description, created_by, default_input_policy, default_output_policy) \
+         VALUES ($1, $2, $3, $4, $5) RETURNING *",
     )
     .bind(&req.name)
     .bind(req.description.unwrap_or_default())
     .bind(auth.user_id)
+    .bind(&req.default_input_policy)
+    .bind(&req.default_output_policy)
     .fetch_one(&state.db)
     .await?;
 
@@ -112,10 +120,31 @@ async fn get_policy_set(
     Ok(Json(ps))
 }
 
+/// Deserialize a present value (including `null`) as `Some(_)`, so a caller can
+/// distinguish "field absent" (→ None, leave unchanged) from "field present and
+/// null" (→ Some(None), clear to system default). Paired with `#[serde(default)]`
+/// on the field for the absent case. This is the standard double-Option idiom.
+fn deserialize_some<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    serde::Deserialize::deserialize(deserializer).map(Some)
+}
+
 #[derive(Debug, serde::Deserialize)]
 pub struct UpdatePolicySetRequest {
     pub name: Option<String>,
     pub description: Option<String>,
+    /// Double-Option so the operator can clear back to system default:
+    /// absent → None (leave unchanged), null → Some(None) (clear to system
+    /// default), "deny" → Some(Some(Deny)) (set value). `deserialize_some`
+    /// is required because a plain `Option<Option<T>>` maps JSON `null` to
+    /// `None` (indistinguishable from absent) — clearing would be impossible.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub default_input_policy: Option<Option<FirewallDefaultPolicy>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub default_output_policy: Option<Option<FirewallDefaultPolicy>>,
 }
 
 async fn update_policy_set(
@@ -130,12 +159,33 @@ async fn update_policy_set(
         ));
     }
 
+    // Explode the double-Options into (present, value) pairs so CASE can
+    // distinguish "set to NULL" from "leave unchanged".
+    let (in_present, in_value) = match req.default_input_policy {
+        None => (false, None),
+        Some(v) => (true, v),
+    };
+    let (out_present, out_value) = match req.default_output_policy {
+        None => (false, None),
+        Some(v) => (true, v),
+    };
+
     let ps: FirewallPolicySet = sqlx::query_as(
-        "UPDATE firewall_policy_sets SET name = COALESCE($2, name), description = COALESCE($3, description), updated_at = NOW() WHERE id = $1 RETURNING *",
+        "UPDATE firewall_policy_sets SET \
+            name = COALESCE($2, name), \
+            description = COALESCE($3, description), \
+            default_input_policy = CASE WHEN $4 THEN $5 ELSE default_input_policy END, \
+            default_output_policy = CASE WHEN $6 THEN $7 ELSE default_output_policy END, \
+            updated_at = NOW() \
+         WHERE id = $1 RETURNING *",
     )
     .bind(id)
     .bind(&req.name)
     .bind(&req.description)
+    .bind(in_present)
+    .bind(in_value)
+    .bind(out_present)
+    .bind(out_value)
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| fw_core::AppError::NotFound("Policy set not found".to_string()))?;

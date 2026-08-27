@@ -487,6 +487,10 @@ export interface FirewallPolicySet {
   created_by: string | null
   created_at: string
   updated_at: string
+  /** Default input policy; null = system default (agent does not touch it). */
+  default_input_policy: string | null
+  /** Default output policy; null = system default (agent does not touch it). */
+  default_output_policy: string | null
 }
 
 export interface PreviewCompilationResponse {
@@ -495,11 +499,16 @@ export interface PreviewCompilationResponse {
   rule_count: number
 }
 
+/** A policy set default input/output policy. `null` = system default. */
+export type DefaultPolicyValue = "allow" | "deny" | "reject" | null
+
 export const policySetsApi = {
   list: () => apiClient.get<{ policy_sets: FirewallPolicySet[]; total: number }>("/policy-sets"),
   get: (id: string) => apiClient.get<FirewallPolicySet>(`/policy-sets/${id}`),
-  create: (data: { name: string; description?: string }) => apiClient.post<FirewallPolicySet>("/policy-sets", data),
-  update: (id: string, data: { name?: string; description?: string }) => apiClient.put<FirewallPolicySet>(`/policy-sets/${id}`, data),
+  create: (data: { name: string; description?: string; default_input_policy?: DefaultPolicyValue; default_output_policy?: DefaultPolicyValue }) => apiClient.post<FirewallPolicySet>("/policy-sets", data),
+  /** For the default-policy fields: omit = leave unchanged; null = clear to
+   *  system default; a value = set. */
+  update: (id: string, data: { name?: string; description?: string; default_input_policy?: DefaultPolicyValue; default_output_policy?: DefaultPolicyValue }) => apiClient.put<FirewallPolicySet>(`/policy-sets/${id}`, data),
   delete: (id: string) => apiClient.delete(`/policy-sets/${id}`),
   listRules: (id: string) => apiClient.get<{ rules: FirewallRule[] }>(`/policy-sets/${id}/rules`),
   /** GET /policy-sets/{id}/rule-groups — the rule groups in the set, in apply order. */

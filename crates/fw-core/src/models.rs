@@ -31,6 +31,30 @@ impl FirewallAction {
     }
 }
 
+/// A policy set's default input/output policy (applied by the agent as
+/// `ufw default <policy> incoming|outgoing`). NULL at the DB level means
+/// "system default" — the agent leaves the direction's default untouched
+/// (preserving the pre-existing reset-based behavior). The enum itself only
+/// carries the three explicit values.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(type_name = "firewall_default_policy", rename_all = "lowercase")]
+pub enum FirewallDefaultPolicy {
+    Allow,
+    Deny,
+    Reject,
+}
+
+impl FirewallDefaultPolicy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+            Self::Reject => "reject",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "firewall_direction", rename_all = "lowercase")]
@@ -316,6 +340,12 @@ pub struct FirewallPolicySet {
     pub created_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Default policy for the input direction (NULL = system default — agent
+    /// does not call `ufw default incoming`).
+    pub default_input_policy: Option<FirewallDefaultPolicy>,
+    /// Default policy for the output direction (NULL = system default — agent
+    /// does not call `ufw default outgoing`).
+    pub default_output_policy: Option<FirewallDefaultPolicy>,
 }
 
 /// A reusable, ordered collection of rules — the middle tier of the containment
@@ -567,4 +597,28 @@ pub struct PendingAction {
     pub delivered_at: Option<chrono::DateTime<chrono::Utc>>,
     pub executed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FirewallDefaultPolicy;
+
+    #[test]
+    fn default_policy_serde_is_lowercase_round_trip() {
+        // The LHFM JSON-enum-casing contract: JSON uses lowercase variants
+        // matching the DB enum and TS. A value must round-trip through serde.
+        for v in [
+            FirewallDefaultPolicy::Allow,
+            FirewallDefaultPolicy::Deny,
+            FirewallDefaultPolicy::Reject,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            assert_eq!(json, format!("\"{}\"", v.as_str()));
+            let back: FirewallDefaultPolicy = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, v);
+        }
+        // None serializes to null (system default at the API boundary).
+        let none_json = serde_json::to_string(&Option::<FirewallDefaultPolicy>::None).unwrap();
+        assert_eq!(none_json, "null");
+    }
 }
