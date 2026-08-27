@@ -15,6 +15,14 @@ jwt_signing_key_path = "/etc/firewall-manager/jwt/signing.pem"
 jwt_verify_key_path = "/etc/firewall-manager/jwt/verify.pem"
 web_tls_cert_path = "/etc/firewall-manager/tls/cert.pem"
 web_tls_key_path = "/etc/firewall-manager/tls/key.pem"
+# CA-signed cert/key for the agent mTLS listener (8443), issued by the
+# manager's own CA on first start. Agents validate it against the CA cert they
+# pin, which the self-signed web cert does not chain to.
+agent_tls_cert_path = "/etc/firewall-manager/tls/agent-cert.pem"
+agent_tls_key_path = "/etc/firewall-manager/tls/agent-key.pem"
+# SANs agents use to reach the manager (DNS names or IPs), baked into the
+# agent-listener cert. An empty list disables the agent mTLS listener.
+agent_tls_sans = ["localhost", "127.0.0.1"]
 
 [worker]
 health_poll_interval_secs = 300

@@ -1,6 +1,7 @@
 #![allow(clippy::type_complexity)]
 //! fw-web — Linux Host Firewall Manager web server (library crate).
 
+pub mod agent_cert;
 pub mod agent_listener;
 pub mod mtls;
 pub mod routes;

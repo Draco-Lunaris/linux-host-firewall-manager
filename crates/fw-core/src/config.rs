@@ -48,6 +48,17 @@ pub struct SecurityConfig {
     pub web_tls_cert_path: String,
     #[serde(default = "default_web_tls_key_path")]
     pub web_tls_key_path: String,
+    /// CA-signed server cert/key for the agent mTLS listener (8443). The manager
+    /// issues it from its own CA on first start; agents validate it against the
+    /// CA cert they pin, which the self-signed web cert does not chain to.
+    #[serde(default = "default_agent_tls_cert_path")]
+    pub agent_tls_cert_path: String,
+    #[serde(default = "default_agent_tls_key_path")]
+    pub agent_tls_key_path: String,
+    /// SANs agents use to reach the manager (DNS names or IPs), baked into the
+    /// agent-listener cert. An empty list disables the agent mTLS listener.
+    #[serde(default = "default_agent_tls_sans")]
+    pub agent_tls_sans: Vec<String>,
 }
 
 fn default_web_tls_cert_path() -> String {
@@ -56,6 +67,18 @@ fn default_web_tls_cert_path() -> String {
 
 fn default_web_tls_key_path() -> String {
     "/etc/firewall-manager/tls/key.pem".to_string()
+}
+
+fn default_agent_tls_cert_path() -> String {
+    "/etc/firewall-manager/tls/agent-cert.pem".to_string()
+}
+
+fn default_agent_tls_key_path() -> String {
+    "/etc/firewall-manager/tls/agent-key.pem".to_string()
+}
+
+fn default_agent_tls_sans() -> Vec<String> {
+    vec!["localhost".to_string(), "127.0.0.1".to_string()]
 }
 
 #[derive(Debug, Clone, Deserialize)]
