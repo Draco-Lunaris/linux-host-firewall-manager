@@ -60,6 +60,31 @@ fn agent_binary_hash() -> Option<String> {
     .clone()
 }
 
+/// Parse the agent's `manager_agent_url` into a (ip, port) pair for the apply
+/// context. The URL is normalized to an IP at enrollment, so this only verifies
+/// it's still a specific IP and extracts the port. Returns an error if the URL
+/// is malformed, has no host/port, or the host isn't a specific IP — the caller
+/// (safety gate) refuses to apply in that case rather than risk a lockout.
+fn manager_endpoint(manager_url: &str) -> Result<(String, u16)> {
+    let parsed = url::Url::parse(manager_url)
+        .map_err(|e| anyhow::anyhow!("invalid manager_agent_url: {e}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("manager_agent_url has no host"))?;
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| anyhow::anyhow!("manager_agent_url has no port"))?;
+    let ip: std::net::IpAddr = host
+        .parse()
+        .map_err(|_| anyhow::anyhow!("manager_agent_url host is not an IP (got {host}); re-enroll with an IP manager address"))?;
+    if ip.is_unspecified() {
+        anyhow::bail!(
+            "manager_agent_url is an unspecified address ({ip}); re-enroll with a specific IP"
+        );
+    }
+    Ok((ip.to_string(), port))
+}
+
 /// Run the pull loop as a background task.
 pub async fn run_pull_loop(
     backend: Arc<dyn FirewallBackend>,
@@ -226,8 +251,26 @@ async fn run_pull_cycle(
                 if let Ok(last_good) = crate::safe_mode::load_last_good() {
                     if !last_good.is_empty() {
                         let protected_cidrs = config.read().await.protected_cidrs.clone();
+                        let cached_defaults =
+                            crate::safe_mode::load_last_defaults().unwrap_or_default();
+                        let (manager_ip, manager_port) = {
+                            let url = config.read().await.pull.manager_agent_url.clone();
+                            match manager_endpoint(&url) {
+                                Ok(ep) => ep,
+                                Err(ep_err) => {
+                                    tracing::error!(error = %ep_err, "safe-mode revert: cannot build umbilical; keeping current rules");
+                                    return Ok(false);
+                                }
+                            }
+                        };
+                        let ctx = crate::backend::ApplyContext {
+                            manager_ip,
+                            manager_port,
+                            default_input_policy: cached_defaults.default_input_policy.clone(),
+                            default_output_policy: cached_defaults.default_output_policy.clone(),
+                        };
                         if let Err(revert_err) =
-                            apply_rules(backend, &last_good, &protected_cidrs).await
+                            apply_rules(backend, &last_good, &protected_cidrs, &ctx).await
                         {
                             tracing::error!(error = %revert_err, "Safe-mode revert apply failed");
                         }
@@ -265,28 +308,71 @@ async fn run_pull_cycle(
         }
     }
 
-    // 5. Apply rules. Two triggers, each leading to a single apply:
+    // 5. Apply rules. Three triggers, each leading to a single apply:
     //   - rules_changed: the manager's policy changed since we last applied
     //     → apply the new ruleset the manager just sent.
+    //   - defaults_changed: the policy set's default input/output policy changed
+    //     since we last applied → re-apply the ruleset with the new defaults.
     //   - local_drift: our live rules differ from what we last applied (an
     //     out-of-band change) → re-apply our cached last-applied ruleset
-    //     (self-heal), which is the current policy.
-    // In steady state (neither) we do nothing — no `ufw reset`, so no
-    // repeated network interruption when nothing has changed.
+    //     (self-heal) with the cached defaults.
+    // In steady state (none) we do nothing — no `ufw reset`, so no repeated
+    // network interruption when nothing has changed.
+    let cached_defaults = crate::safe_mode::load_last_defaults().unwrap_or_default();
+    let defaults_changed = cached_defaults.default_input_policy != response.default_input_policy
+        || cached_defaults.default_output_policy != response.default_output_policy;
+
+    let (manager_ip, manager_port) = {
+        let url = config.read().await.pull.manager_agent_url.clone();
+        match manager_endpoint(&url) {
+            Ok(ep) => ep,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "cannot build manager umbilical for apply; skipping apply this cycle"
+                );
+                (String::new(), 0u16) // safety gate inside apply_rules will bail
+            }
+        }
+    };
+
+    let protected_cidrs = config.read().await.protected_cidrs.clone();
+
+    // The defaults that will be in effect after this apply (saved as
+    // last_defaults on success so a defaults-only change stops re-triggering).
+    let mut applied_defaults = cached_defaults.clone();
     let apply_outcome: Option<Result<String>> =
-        if response.rules_changed && !response.rules.is_empty() {
-            tracing::info!(
-                rule_count = response.rules.len(),
-                "Rules changed, applying new ruleset"
-            );
-            let protected_cidrs = config.read().await.protected_cidrs.clone();
-            Some(apply_rules_from_dto(backend, &response.rules, &protected_cidrs).await)
+        if !response.rules.is_empty() && (response.rules_changed || defaults_changed) {
+            if response.rules_changed {
+                tracing::info!(
+                    rule_count = response.rules.len(),
+                    "Rules changed, applying new ruleset"
+                );
+            } else {
+                tracing::info!("Default policy changed, re-applying ruleset with new defaults");
+            }
+            let ctx = crate::backend::ApplyContext {
+                manager_ip: manager_ip.clone(),
+                manager_port,
+                default_input_policy: response.default_input_policy.clone(),
+                default_output_policy: response.default_output_policy.clone(),
+            };
+            applied_defaults = crate::safe_mode::LastDefaults {
+                default_input_policy: response.default_input_policy.clone(),
+                default_output_policy: response.default_output_policy.clone(),
+            };
+            Some(apply_rules_from_dto(backend, &response.rules, &protected_cidrs, &ctx).await)
         } else if local_drift {
             tracing::info!("Local drift detected — re-applying last-applied ruleset (self-heal)");
             match crate::safe_mode::load_last_good() {
                 Ok(last_good) if !last_good.is_empty() => {
-                    let protected_cidrs = config.read().await.protected_cidrs.clone();
-                    Some(apply_rules(backend, &last_good, &protected_cidrs).await)
+                    let ctx = crate::backend::ApplyContext {
+                        manager_ip: manager_ip.clone(),
+                        manager_port,
+                        default_input_policy: cached_defaults.default_input_policy.clone(),
+                        default_output_policy: cached_defaults.default_output_policy.clone(),
+                    };
+                    Some(apply_rules(backend, &last_good, &protected_cidrs, &ctx).await)
                 }
                 _ => {
                     tracing::warn!("Local drift but no last-applied ruleset cached to re-apply");
@@ -302,6 +388,9 @@ async fn run_pull_cycle(
             Ok(new_hash) => {
                 // Persist the last-applied hash for local drift detection.
                 let _ = crate::drift::save_expected_hash(&new_hash);
+                // Persist the defaults we just applied so a defaults-only change
+                // stops re-triggering on the next cycle.
+                let _ = crate::safe_mode::save_last_defaults(&applied_defaults);
                 let result_req = CheckInResultRequest {
                     host_id,
                     action_id: None,
@@ -379,9 +468,10 @@ async fn apply_rules_from_dto(
     backend: &Arc<dyn FirewallBackend>,
     dtos: &[RuleDto],
     protected_cidrs: &[String],
+    ctx: &crate::backend::ApplyContext,
 ) -> Result<String> {
     let rules: Vec<FirewallRule> = dtos.iter().map(dto_to_rule).collect();
-    apply_rules(backend, &rules, protected_cidrs).await
+    apply_rules(backend, &rules, protected_cidrs, ctx).await
 }
 
 /// Compile and apply a ruleset under the per-host apply mutex, after enforcing
@@ -391,12 +481,31 @@ async fn apply_rules(
     backend: &Arc<dyn FirewallBackend>,
     rules: &[FirewallRule],
     protected_cidrs: &[String],
+    ctx: &crate::backend::ApplyContext,
 ) -> Result<String> {
     // Enforce protected CIDRs before compiling/applying.
     if let Err(violations) =
         crate::protected_cidrs::check_rules_against_protected(rules, protected_cidrs)
     {
         anyhow::bail!("protected CIDR violations: {}", violations.join("; "));
+    }
+
+    // Safety gate: never apply (and especially never `ufw reset` toward a
+    // default-deny policy) unless the umbilical can be established — i.e. the
+    // manager IP/port in ctx is a real, specific IP. Without it the agent could
+    // lock itself out of the manager with no recovery. Bail here keeps the
+    // last ruleset in place.
+    if ctx.manager_ip.parse::<std::net::IpAddr>().is_err()
+        || ctx
+            .manager_ip
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_unspecified())
+            .unwrap_or(true)
+    {
+        anyhow::bail!(
+            "cannot establish manager umbilical: manager_ip is not a specific IP (got \"{}\") — refusing to apply; re-enroll with an IP manager address",
+            ctx.manager_ip
+        );
     }
 
     // Hold the per-host apply mutex for the whole compile+apply so concurrent
@@ -408,7 +517,7 @@ async fn apply_rules(
         .map_err(|e| anyhow::anyhow!("acquire apply lock: {}", e))?;
 
     let compiled = backend
-        .compile(rules)
+        .compile(rules, ctx)
         .await
         .map_err(|e| anyhow::anyhow!("Compile failed: {}", e))?;
 

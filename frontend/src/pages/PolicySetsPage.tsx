@@ -16,7 +16,7 @@ import { CSS } from "@dnd-kit/utilities"
 import {
   policySetsApi, ruleGroupsApi,
   type FirewallPolicySet, type PolicySetRuleGroup, type FirewallRuleGroup,
-  type PreviewCompilationResponse,
+  type PreviewCompilationResponse, type DefaultPolicyValue,
 } from "../api/client"
 
 export default function PolicySetsPage() {
@@ -138,6 +138,16 @@ function PolicySetAccordion({ policySet, onEdit, onDelete }: { policySet: Firewa
         <Box sx={{ display: "flex", alignItems: "center", gap: 2, width: "100%" }}>
           <Typography variant="h6">{policySet.name}</Typography>
           <Chip label={`${groups.length} rule groups`} size="small" />
+          <Chip
+            label={`in: ${policySet.default_input_policy ?? "system"}`}
+            size="small"
+            variant="outlined"
+          />
+          <Chip
+            label={`out: ${policySet.default_output_policy ?? "system"}`}
+            size="small"
+            variant="outlined"
+          />
           <Box sx={{ flexGrow: 1 }} />
           <IconButton onClick={(e) => { e.stopPropagation(); onEdit() }}><EditIcon /></IconButton>
           <IconButton onClick={(e) => { e.stopPropagation(); onDelete() }}><DeleteIcon /></IconButton>
@@ -195,22 +205,60 @@ function PolicySetAccordion({ policySet, onEdit, onDelete }: { policySet: Firewa
 }
 
 function PolicySetDialog({ open, onClose, editingSet }: { open: boolean; onClose: () => void; editingSet: FirewallPolicySet | null }) {
+  // "" is the UI sentinel for "System default" (null at the API). The other
+  // values map to the firewall_default_policy enum.
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
+  const [defaultInput, setDefaultInput] = useState<string>("")
+  const [defaultOutput, setDefaultOutput] = useState<string>("")
+  // Track the prefill so update can OMIT unchanged default fields (a sent null
+  // would otherwise clear them). name/description are always sent (COALESCE).
+  const [initialInput, setInitialInput] = useState<string>("")
+  const [initialOutput, setInitialOutput] = useState<string>("")
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (editingSet) { setName(editingSet.name); setDescription(editingSet.description) }
-    else { setName(""); setDescription("") }
+    if (editingSet) {
+      setName(editingSet.name)
+      setDescription(editingSet.description)
+      const i = editingSet.default_input_policy ?? ""
+      const o = editingSet.default_output_policy ?? ""
+      setDefaultInput(i); setInitialInput(i)
+      setDefaultOutput(o); setInitialOutput(o)
+    } else {
+      setName(""); setDescription("")
+      setDefaultInput(""); setInitialInput("")
+      setDefaultOutput(""); setInitialOutput("")
+    }
   }, [editingSet, open])
+
+  const uiToVal = (v: string): DefaultPolicyValue => (v === "" ? null : (v as "allow" | "deny" | "reject"))
 
   const handleSubmit = async () => {
     try {
-      if (editingSet) { await policySetsApi.update(editingSet.id, { name, description }) }
-      else { await policySetsApi.create({ name, description }) }
+      if (editingSet) {
+        const payload: Parameters<typeof policySetsApi.update>[1] = { name, description }
+        if (defaultInput !== initialInput) payload.default_input_policy = uiToVal(defaultInput)
+        if (defaultOutput !== initialOutput) payload.default_output_policy = uiToVal(defaultOutput)
+        await policySetsApi.update(editingSet.id, payload)
+      } else {
+        await policySetsApi.create({
+          name,
+          description,
+          default_input_policy: uiToVal(defaultInput),
+          default_output_policy: uiToVal(defaultOutput),
+        })
+      }
       onClose()
     } catch (e: unknown) { setError((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || "Failed to save") }
   }
+
+  const policyOptions = [
+    { value: "", label: "System default" },
+    { value: "allow", label: "allow" },
+    { value: "deny", label: "deny" },
+    { value: "reject", label: "reject" },
+  ]
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth>
@@ -219,6 +267,18 @@ function PolicySetDialog({ open, onClose, editingSet }: { open: boolean; onClose
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} fullWidth sx={{ mt: 1 }} required />
         <TextField label="Description" value={description} onChange={(e) => setDescription(e.target.value)} fullWidth sx={{ mt: 2 }} />
+        <FormControl fullWidth sx={{ mt: 2 }}>
+          <InputLabel>Default incoming policy</InputLabel>
+          <Select label="Default incoming policy" value={defaultInput} onChange={(e) => setDefaultInput(e.target.value)}>
+            {policyOptions.map((o) => <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>)}
+          </Select>
+        </FormControl>
+        <FormControl fullWidth sx={{ mt: 2 }}>
+          <InputLabel>Default outgoing policy</InputLabel>
+          <Select label="Default outgoing policy" value={defaultOutput} onChange={(e) => setDefaultOutput(e.target.value)}>
+            {policyOptions.map((o) => <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>)}
+          </Select>
+        </FormControl>
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>

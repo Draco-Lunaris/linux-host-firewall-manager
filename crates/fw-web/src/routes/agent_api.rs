@@ -131,6 +131,11 @@ pub struct CheckInResponse {
     pub rules: Vec<RuleDto>,
     pub config: Option<ConfigUpdate>,
     pub pending_actions: Vec<PendingActionDto>,
+    /// Assigned policy set's default input policy (NULL/system-default = None).
+    /// The agent applies these as `ufw default <policy> incoming|outgoing`.
+    pub default_input_policy: Option<String>,
+    /// Assigned policy set's default output policy (NULL/system-default = None).
+    pub default_output_policy: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -242,6 +247,26 @@ async fn check_in(
     } else {
         (vec![], "empty".to_string())
     };
+
+    // Fetch the assigned policy set's default input/output policies so the
+    // agent can apply `ufw default <policy> incoming|outgoing`. NULL at the DB
+    // level (system default) decodes as None, meaning "don't touch that
+    // direction's default".
+    let (default_input_policy, default_output_policy): (Option<String>, Option<String>) =
+        if let Some(ps_id) = policy_set_id {
+            sqlx::query_as(
+                "SELECT default_input_policy::text AS default_input_policy, \
+                        default_output_policy::text AS default_output_policy \
+                 FROM firewall_policy_sets WHERE id = $1",
+            )
+            .bind(ps_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(fw_core::AppError::Database)?
+            .unwrap_or((None, None))
+        } else {
+            (None, None)
+        };
 
     // Determine if rules changed (agent's hash != expected hash)
     let rules_changed = req.rules_hash != expected_hash;
@@ -358,6 +383,8 @@ async fn check_in(
         rules: rules.into_iter().map(rule_to_dto).collect(),
         config,
         pending_actions,
+        default_input_policy,
+        default_output_policy,
     }))
 }
 

@@ -97,6 +97,58 @@ pub fn auto_detect_manager_cidr(manager_url: &str) -> Option<String> {
     addrs.next().map(|addr| addr.ip().to_string())
 }
 
+/// Normalize a manager URL so its host is an IP literal.
+///
+/// If the host is already an IP it is kept; otherwise it is resolved once here
+/// (DNS works at enrollment time) and the URL is rewritten with the resolved
+/// IP. This eliminates the agent's runtime DNS dependency — critical under a
+/// policy set with `default deny outgoing`, where DNS (UDP/53 outbound) would
+/// otherwise be blocked and the agent could never resolve the manager to pull
+/// updates. Refuses an unspecified address (`0.0.0.0`/`::`) — a bind address
+/// cannot be used as a connect target, and handing one to the agent is a
+/// manager misconfiguration that must surface at enrollment, not silently
+/// lock the host out later.
+pub fn normalize_manager_url_to_ip(raw: &str) -> Result<String, String> {
+    let parsed = url::Url::parse(raw).map_err(|e| format!("invalid manager URL: {e}"))?;
+    let scheme = parsed.scheme();
+    if scheme != "https" && scheme != "http" {
+        return Err(format!("unsupported manager URL scheme: {scheme}"));
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "manager URL has no host".to_string())?;
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| "manager URL has no port".to_string())?;
+
+    let ip: std::net::IpAddr = if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        ip
+    } else {
+        use std::net::ToSocketAddrs;
+        let addrs = format!("{host}:{port}")
+            .to_socket_addrs()
+            .map_err(|e| format!("failed to resolve manager hostname {host}: {e}"))?;
+        addrs
+            .map(|a| a.ip())
+            .find(|ip| !ip.is_unspecified())
+            .ok_or_else(|| format!("manager hostname {host} resolved to no usable IP"))?
+    };
+
+    if ip.is_unspecified() {
+        return Err(format!(
+            "manager address must be a specific IP, got {ip} — set the manager server.host to a real address, not a bind address"
+        ));
+    }
+
+    // Bracket IPv6 literals in the authority component.
+    let host_repr = if ip.is_ipv6() {
+        format!("[{ip}]")
+    } else {
+        ip.to_string()
+    };
+    Ok(format!("{scheme}://{host_repr}:{port}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,5 +220,28 @@ mod tests {
         let rules = vec![make_rule(FirewallAction::Allow, None, Some("8.8.8.8/32"))];
         let res = check_rules_against_protected(&rules, &["10.1.2.3/32".to_string()]);
         assert!(res.is_ok());
+    }
+
+    #[test]
+    fn normalize_keeps_ip_literal_and_preserves_port() {
+        let n = normalize_manager_url_to_ip("https://10.0.0.5:8443").unwrap();
+        assert_eq!(n, "https://10.0.0.5:8443");
+    }
+
+    #[test]
+    fn normalize_brackets_ipv6() {
+        let n = normalize_manager_url_to_ip("https://[::1]:8443").unwrap();
+        assert_eq!(n, "https://[::1]:8443");
+    }
+
+    #[test]
+    fn normalize_rejects_unspecified_address() {
+        let err = normalize_manager_url_to_ip("https://0.0.0.0:8443").unwrap_err();
+        assert!(err.contains("specific IP"), "got: {err}");
+    }
+
+    #[test]
+    fn normalize_rejects_bad_scheme() {
+        assert!(normalize_manager_url_to_ip("ftp://10.0.0.5:8443").is_err());
     }
 }

@@ -25,6 +25,21 @@ pub struct CompiledRules {
     pub commands: Vec<String>,
 }
 
+/// Context the backend needs to compile a full apply: the policy-set default
+/// policies (None = system default — don't touch that direction) and the
+/// manager endpoint used to build the unremovable outbound "umbilical" allow
+/// that keeps the agent's pull path alive under a default-deny-outgoing policy.
+#[derive(Debug, Clone)]
+pub struct ApplyContext {
+    /// Manager IP literal (the agent normalizes the URL to an IP at enrollment
+    /// so there is no DNS dependency at apply time).
+    pub manager_ip: String,
+    pub manager_port: u16,
+    /// `allow`/`deny`/`reject` or None (system default — no `ufw default` call).
+    pub default_input_policy: Option<String>,
+    pub default_output_policy: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ApplyResult {
     pub applied: u32,
@@ -49,7 +64,15 @@ pub struct BackendStatus {
 #[async_trait]
 pub trait FirewallBackend: Send + Sync {
     fn name(&self) -> &'static str;
-    async fn compile(&self, rules: &[FirewallRule]) -> Result<CompiledRules, BackendError>;
+    /// Compile the policy rules into the ordered command list the backend runs
+    /// after a reset. The `ApplyContext` carries the policy-set default
+    /// policies and the manager endpoint so the backend can prepend the
+    /// umbilical allow + `ufw default` calls before the policy rules.
+    async fn compile(
+        &self,
+        rules: &[FirewallRule],
+        ctx: &ApplyContext,
+    ) -> Result<CompiledRules, BackendError>;
     async fn apply(&self, compiled: &CompiledRules) -> Result<ApplyResult, BackendError>;
     async fn snapshot(&self) -> Result<NormalizedSnapshot, BackendError>;
     async fn reset(&self) -> Result<(), BackendError>;
@@ -138,8 +161,34 @@ impl FirewallBackend for UfwBackend {
         "ufw"
     }
 
-    async fn compile(&self, rules: &[FirewallRule]) -> Result<CompiledRules, BackendError> {
+    async fn compile(
+        &self,
+        rules: &[FirewallRule],
+        ctx: &ApplyContext,
+    ) -> Result<CompiledRules, BackendError> {
         let mut commands = Vec::new();
+
+        // 1. Umbilical FIRST: an outbound allow to the manager so the agent's
+        //    pull path survives `default deny outgoing` and any policy rule
+        //    like `deny out to any`. `apply` does `ufw reset` (clears all rules)
+        //    before replaying, so appending this first puts it at rule position
+        //    1 — UFW first-match-wins ⇒ it's evaluated before any policy deny.
+        //    Modeled on compile_ufw_rule's `from … to … port …` syntax.
+        commands.push(format!(
+            "ufw allow out from any to {} port {} proto tcp comment 'fw-mgr-umbilical'",
+            ctx.manager_ip, ctx.manager_port
+        ));
+
+        // 2. Default policies (only when the policy set specifies one; None =
+        //    system default — leave that direction untouched).
+        if let Some(p) = &ctx.default_input_policy {
+            commands.push(format!("ufw default {p} incoming"));
+        }
+        if let Some(p) = &ctx.default_output_policy {
+            commands.push(format!("ufw default {p} outgoing"));
+        }
+
+        // 3. Policy rules.
         for rule in rules {
             commands.push(compile_ufw_rule(rule));
         }
@@ -376,7 +425,19 @@ impl FirewallBackend for FirewalldBackend {
         "firewalld"
     }
 
-    async fn compile(&self, rules: &[FirewallRule]) -> Result<CompiledRules, BackendError> {
+    async fn compile(
+        &self,
+        rules: &[FirewallRule],
+        ctx: &ApplyContext,
+    ) -> Result<CompiledRules, BackendError> {
+        // firewalld's `apply` is additive (no `ufw reset`-style clear), so it
+        // has no reset-window lockout risk and the existing firewall state —
+        // including whatever already allows the agent to reach the manager —
+        // is preserved across every apply. The umbilical and per-policy default
+        // policies are therefore UFW-only for now (the manager endpoint in
+        // `ctx` is accepted but unused here); wiring firewalld zone-target
+        // defaults + an outbound accept is a documented follow-up.
+        let _ = ctx;
         let mut commands = Vec::new();
         for rule in rules {
             commands.push(compile_firewalld_rule(rule));
@@ -547,5 +608,109 @@ pub mod container_detect {
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    fn allow_rule(name: &str) -> FirewallRule {
+        FirewallRule {
+            id: Uuid::new_v4(),
+            name: name.to_string(),
+            description: String::new(),
+            action: FirewallAction::Allow,
+            direction: FirewallDirection::In,
+            protocol: FirewallProtocol::Tcp,
+            src_cidr: None,
+            src_port_start: None,
+            src_port_end: None,
+            dst_cidr: None,
+            dst_port_start: Some(22),
+            dst_port_end: Some(22),
+            interface_in: None,
+            interface_out: None,
+            comment: String::new(),
+            log: false,
+            priority: 0,
+            created_by: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    fn ctx(def_in: Option<&str>, def_out: Option<&str>, ip: &str, port: u16) -> ApplyContext {
+        ApplyContext {
+            manager_ip: ip.to_string(),
+            manager_port: port,
+            default_input_policy: def_in.map(String::from),
+            default_output_policy: def_out.map(String::from),
+        }
+    }
+
+    #[tokio::test]
+    async fn ufw_compile_umbilical_first_then_defaults_then_rules() {
+        let c = UfwBackend
+            .compile(
+                &[allow_rule("ssh")],
+                &ctx(Some("deny"), Some("deny"), "10.0.0.1", 8443),
+            )
+            .await
+            .unwrap();
+        assert_eq!(c.commands.len(), 4);
+        // 1. Umbilical (outbound allow to manager) — must precede any policy deny.
+        assert_eq!(
+            c.commands[0],
+            "ufw allow out from any to 10.0.0.1 port 8443 proto tcp comment 'fw-mgr-umbilical'"
+        );
+        // 2/3. Default policies.
+        assert_eq!(c.commands[1], "ufw default deny incoming");
+        assert_eq!(c.commands[2], "ufw default deny outgoing");
+        // 4. Policy rule.
+        assert!(c.commands[3].starts_with("ufw allow"));
+    }
+
+    #[tokio::test]
+    async fn ufw_compile_omits_default_commands_when_system_default() {
+        let c = UfwBackend
+            .compile(&[allow_rule("ssh")], &ctx(None, None, "10.0.0.1", 8443))
+            .await
+            .unwrap();
+        // Umbilical + the policy rule only; no `ufw default` commands.
+        assert_eq!(c.commands.len(), 2);
+        assert!(c.commands[0].contains("fw-mgr-umbilical"));
+        assert!(
+            !c.commands.iter().any(|c| c.starts_with("ufw default")),
+            "no ufw default commands when defaults are None"
+        );
+    }
+
+    #[tokio::test]
+    async fn ufw_compile_umbilical_precedes_policy_deny_out() {
+        // A policy that denies all outbound must not block the umbilical: the
+        // umbilical is emitted first, so UFW first-match-wins lets manager
+        // traffic through before the deny matches.
+        let mut deny_out = allow_rule("deny-out");
+        deny_out.action = FirewallAction::Deny;
+        deny_out.direction = FirewallDirection::Out;
+        deny_out.name = "deny-all-out".to_string();
+        let c = UfwBackend
+            .compile(&[deny_out], &ctx(None, Some("deny"), "10.0.0.1", 8443))
+            .await
+            .unwrap();
+        let umbilical_idx = c
+            .commands
+            .iter()
+            .position(|c| c.contains("fw-mgr-umbilical"))
+            .unwrap();
+        let deny_idx = c
+            .commands
+            .iter()
+            .position(|c| c.starts_with("ufw deny"))
+            .unwrap();
+        assert!(umbilical_idx < deny_idx);
     }
 }
