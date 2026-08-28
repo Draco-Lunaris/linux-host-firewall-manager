@@ -119,4 +119,23 @@ mod tests {
         let json = serde_json::to_string(&PendingActionStatus::Delivered).unwrap();
         assert_eq!(json, "\"delivered\"");
     }
+
+    #[test]
+    fn test_auth_provider_serialization_matches_db_values() {
+        // The JSON API must use snake_case to match the DB `auth_provider`
+        // ENUM values — a casing mismatch 422s on POST (the UserRole bug
+        // class; AzureSso is the latent trigger, only 'local' is in use).
+        let json = serde_json::to_string(&AuthProvider::Local).unwrap();
+        assert_eq!(json, "\"local\"");
+        let json = serde_json::to_string(&AuthProvider::AzureSso).unwrap();
+        assert_eq!(json, "\"azure_sso\"");
+        let json = serde_json::to_string(&AuthProvider::Keycloak).unwrap();
+        assert_eq!(json, "\"keycloak\"");
+        let json = serde_json::to_string(&AuthProvider::Oidc).unwrap();
+        assert_eq!(json, "\"oidc\"");
+
+        // Round-trip: the API also accepts what the DB stores.
+        let back: AuthProvider = serde_json::from_str("\"azure_sso\"").unwrap();
+        assert_eq!(back, AuthProvider::AzureSso);
+    }
 }
