@@ -23,6 +23,16 @@ agent_tls_key_path = "/etc/firewall-manager/tls/agent-key.pem"
 # SANs agents use to reach the manager (DNS names or IPs), baked into the
 # agent-listener cert. An empty list disables the agent mTLS listener.
 agent_tls_sans = ["localhost", "127.0.0.1"]
+# Optional upstream sub-CA (intermediate) to import. When both files exist,
+# the sub-CA becomes the issuing CA: agent certs, the agent-listener cert, and
+# CRLs are signed with its key, and its full chain is what agents pin. The
+# self-generated root stays as a verification anchor, so already-enrolled
+# agents keep checking in. The chain file holds the sub-CA cert followed by its
+# upstream chain (root last); the key file holds the sub-CA's private key. The
+# sub-CA cert must be a CA with keyCertSign AND cRLSign (revocation needs CRL
+# signing). Leave the files absent to use the self-generated root.
+ca_issuing_chain_path = "/etc/firewall-manager/ca/issuing/chain.pem"
+ca_issuing_key_path = "/etc/firewall-manager/ca/issuing/key.pem"
 
 [worker]
 health_poll_interval_secs = 300

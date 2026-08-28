@@ -15,7 +15,7 @@ use std::sync::Arc;
 mod audit_anchor;
 mod stale_agent_detector;
 
-const REQUIRED_MIGRATION_COUNT: i32 = 35;
+const REQUIRED_MIGRATION_COUNT: i32 = 36;
 const SCHEMA_CHECK_TIMEOUT_SECS: u64 = 120;
 
 #[tokio::main]

@@ -285,15 +285,20 @@ async fn approve_enrollment(
 
     // Persist the leaf cert so it can be revoked by serial and fed into the CRL
     // (the 8443 verifier rejects revoked client certs at the TLS handshake).
-    // Expiry mirrors sign_csr's HOST_CERT_VALIDITY_YEARS (365 days).
+    // issuer_serial records WHICH CA issued it (self-root or imported sub-CA)
+    // so CRLs can be grouped per issuing CA. Empty issuer serial (tests without
+    // a DB) → NULL, which groups under the root CRL. Expiry mirrors sign_csr's
+    // HOST_CERT_VALIDITY_YEARS (365 days).
+    let issuer_serial = state.ca.issuing_serial_hex();
     sqlx::query(
-        "INSERT INTO certificates (host_id, serial_number, common_name, status, issued_at, expires_at, cert_pem, ca_tier)
-         VALUES ($1, $2, $3, 'active', NOW(), NOW() + INTERVAL '365 days', $4, 'leaf')",
+        "INSERT INTO certificates (host_id, serial_number, common_name, status, issued_at, expires_at, cert_pem, ca_tier, issuer_serial)
+         VALUES ($1, $2, $3, 'active', NOW(), NOW() + INTERVAL '365 days', $4, 'leaf', $5)",
     )
     .bind(host_id)
     .bind(&signed.serial_hex)
     .bind(host_id.to_string())
     .bind(&signed.cert_pem)
+    .bind(if issuer_serial.is_empty() { None } else { Some(issuer_serial) })
     .execute(&state.db)
     .await?;
     let pki_bundle = fw_core::models::PkiBundle {

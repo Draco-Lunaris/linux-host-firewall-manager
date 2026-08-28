@@ -137,24 +137,32 @@ fn parse_host_id(cert: &CertificateDer<'_>) -> Option<Uuid> {
 }
 
 /// Build the agent-listener `ServerConfig`: mandatory client-cert verification
-/// pinned to the manager CA root, plus the manager's own server cert/key.
+/// pinned to the manager's trust anchors, plus the manager's own server
+/// cert/key.
 ///
-/// `crl_pems` are PEM-encoded CRLs signed by the manager CA; a client cert
-/// whose serial appears in one of them fails the TLS handshake (revocation is
-/// enforced at the TLS layer — the cert *is* the identity). Unknown revocation
-/// status is allowed: certs issued before leaf persistence (migration 035) and
-/// the CA itself have no entry in the CRL, and failing those would lock out
-/// every pre-existing agent. Revoked = in-CRL is still enforced.
+/// `anchor_pems` are PEM-encoded CA certs clients may chain to: the
+/// self-generated root plus the imported upstream sub-CA chain when one is
+/// configured (both CAs may have issued live certs).
+///
+/// `crl_pems` are PEM-encoded CRLs (one per issuing CA); a client cert whose
+/// serial appears in the CRL of its issuer fails the TLS handshake (revocation
+/// is enforced at the TLS layer — the cert *is* the identity). Unknown
+/// revocation status is allowed: certs issued before leaf persistence
+/// (migration 035) and the CA certs themselves have no entry in the CRL, and
+/// failing those would lock out every pre-existing agent. Revoked = in-CRL is
+/// still enforced.
 pub fn build_agent_server_config(
-    ca_root_pem: &str,
+    anchor_pems: &[String],
     server_cert_pem: &str,
     server_key_pem: &str,
     crl_pems: &[String],
 ) -> Result<Arc<ServerConfig>, std::io::Error> {
     let mut roots = RootCertStore::empty();
-    let mut ca_rd = ca_root_pem.as_bytes();
-    for cert in rustls_pemfile::certs(&mut ca_rd) {
-        roots.add(cert.map_err(io_err)?).map_err(io_err)?;
+    for anchor in anchor_pems {
+        let mut ca_rd = anchor.as_bytes();
+        for cert in rustls_pemfile::certs(&mut ca_rd) {
+            roots.add(cert.map_err(io_err)?).map_err(io_err)?;
+        }
     }
     // rustls wants DER; the CA hands out PEM.
     let crls = crl_pems

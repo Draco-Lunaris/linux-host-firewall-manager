@@ -31,8 +31,7 @@ async fn whoami(host: HostIdentity) -> String {
 #[allow(clippy::type_complexity)]
 fn test_pki() -> (
     String,
-    rcgen::Certificate,
-    KeyPair,
+    rcgen::Issuer<'static, KeyPair>,
     String,
     String,
     String,
@@ -50,6 +49,8 @@ fn test_pki() -> (
     let ca_key = KeyPair::generate().unwrap();
     let ca_cert = ca_params.self_signed(&ca_key).unwrap();
     let ca_pem = ca_cert.pem();
+    // Issuer::new consumes the params + key and yields a 'static issuer.
+    let ca_issuer = rcgen::Issuer::new(ca_params, ca_key);
 
     let mut server_params = CertificateParams::new(vec!["localhost".to_string()]).unwrap();
     server_params
@@ -57,7 +58,7 @@ fn test_pki() -> (
         .push(DnType::CommonName, "manager");
     let server_key = KeyPair::generate().unwrap();
     let server_pem = server_params
-        .signed_by(&server_key, &ca_cert, &ca_key)
+        .signed_by(&server_key, &ca_issuer)
         .unwrap()
         .pem();
     let server_key_pem = server_key.serialize_pem();
@@ -72,15 +73,14 @@ fn test_pki() -> (
     ];
     let client_key = KeyPair::generate().unwrap();
     let client_pem = client_params
-        .signed_by(&client_key, &ca_cert, &ca_key)
+        .signed_by(&client_key, &ca_issuer)
         .unwrap()
         .pem();
     let client_key_pem = client_key.serialize_pem();
 
     (
         ca_pem,
-        ca_cert,
-        ca_key,
+        ca_issuer,
         server_pem,
         server_key_pem,
         client_pem,
@@ -95,19 +95,16 @@ async fn mtls_binds_host_id_from_client_cert() {
     // (main.rs does this at startup). The sibling test may have won the race.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let (
-        ca_pem,
-        _ca_cert,
-        _ca_key,
-        server_pem,
-        server_key_pem,
-        client_pem,
-        client_key_pem,
-        host_id,
-    ) = test_pki();
+    let (ca_pem, _ca_issuer, server_pem, server_key_pem, client_pem, client_key_pem, host_id) =
+        test_pki();
 
-    let server_config =
-        build_agent_server_config(&ca_pem, &server_pem, &server_key_pem, &[]).unwrap();
+    let server_config = build_agent_server_config(
+        std::slice::from_ref(&ca_pem),
+        &server_pem,
+        &server_key_pem,
+        &[],
+    )
+    .unwrap();
     let shared_acceptor = std::sync::Arc::new(std::sync::RwLock::new(
         tokio_rustls::TlsAcceptor::from(server_config),
     ));
@@ -176,7 +173,7 @@ async fn mtls_rejects_crl_revoked_client_cert() {
     // The other test in this binary may have installed it already.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let (ca_pem, ca_cert, ca_key, server_pem, server_key_pem, client_pem, client_key_pem, _host_id) =
+    let (ca_pem, ca_issuer, server_pem, server_key_pem, client_pem, client_key_pem, _host_id) =
         test_pki();
 
     // Revoke the client cert's serial: parse it from the issued cert, then
@@ -196,13 +193,18 @@ async fn mtls_rejects_crl_revoked_client_cert() {
         }],
         key_identifier_method: rcgen::KeyIdMethod::Sha256,
     }
-    .signed_by(&ca_cert, &ca_key)
+    .signed_by(&ca_issuer)
     .unwrap()
     .pem()
     .unwrap();
 
-    let revoked_config =
-        build_agent_server_config(&ca_pem, &server_pem, &server_key_pem, &[crl_pem]).unwrap();
+    let revoked_config = build_agent_server_config(
+        std::slice::from_ref(&ca_pem),
+        &server_pem,
+        &server_key_pem,
+        &[crl_pem],
+    )
+    .unwrap();
     let revoked_acceptor = std::sync::Arc::new(std::sync::RwLock::new(
         tokio_rustls::TlsAcceptor::from(revoked_config),
     ));
@@ -251,7 +253,7 @@ async fn mtls_rejects_crl_revoked_client_cert() {
     other_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
     let other_key = KeyPair::generate().unwrap();
     let other_pem = other_params
-        .signed_by(&other_key, &ca_cert, &ca_key)
+        .signed_by(&other_key, &ca_issuer)
         .unwrap()
         .pem();
     let other_identity = reqwest::Identity::from_pem(
