@@ -7,6 +7,7 @@
 //! the same `ConnectInfo<ClientCertInfo>` → `HostIdentity` path the real
 //! `agent_api` handlers use.
 
+use ::time::OffsetDateTime;
 use axum::serve::Listener;
 use axum::{routing::get, Router};
 use fw_web::agent_listener::{build_agent_server_config, AgentTlsListener};
@@ -17,6 +18,7 @@ use rcgen::{
 };
 use std::time::Duration;
 use uuid::Uuid;
+use x509_parser::prelude::*;
 
 /// Echo the cert-bound host_id. No state, no DB.
 async fn whoami(host: HostIdentity) -> String {
@@ -24,8 +26,19 @@ async fn whoami(host: HostIdentity) -> String {
 }
 
 /// Generate a test CA, a server cert (manager identity), and a client cert
-/// whose CN is a host_id UUID — mirroring what the real CA issues.
-fn test_pki() -> (String, String, String, String, String, Uuid) {
+/// whose CN is a host_id UUID — mirroring what the real CA issues. Returns the
+/// CA signing objects too, so tests can sign CRLs revoking the client cert.
+#[allow(clippy::type_complexity)]
+fn test_pki() -> (
+    String,
+    rcgen::Certificate,
+    KeyPair,
+    String,
+    String,
+    String,
+    String,
+    Uuid,
+) {
     let host_id = Uuid::new_v4();
 
     let mut ca_params = CertificateParams::new(Vec::new()).unwrap();
@@ -33,7 +46,7 @@ fn test_pki() -> (String, String, String, String, String, Uuid) {
     ca_params
         .distinguished_name
         .push(DnType::CommonName, "LHFM Test CA");
-    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
     let ca_key = KeyPair::generate().unwrap();
     let ca_cert = ca_params.self_signed(&ca_key).unwrap();
     let ca_pem = ca_cert.pem();
@@ -66,6 +79,8 @@ fn test_pki() -> (String, String, String, String, String, Uuid) {
 
     (
         ca_pem,
+        ca_cert,
+        ca_key,
         server_pem,
         server_key_pem,
         client_pem,
@@ -77,15 +92,26 @@ fn test_pki() -> (String, String, String, String, String, Uuid) {
 #[tokio::test]
 async fn mtls_binds_host_id_from_client_cert() {
     // The test process doesn't run main(), so install the rustls crypto provider
-    // (main.rs does this at startup).
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .expect("install rustls crypto provider");
+    // (main.rs does this at startup). The sibling test may have won the race.
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let (ca_pem, server_pem, server_key_pem, client_pem, client_key_pem, host_id) = test_pki();
+    let (
+        ca_pem,
+        _ca_cert,
+        _ca_key,
+        server_pem,
+        server_key_pem,
+        client_pem,
+        client_key_pem,
+        host_id,
+    ) = test_pki();
 
-    let server_config = build_agent_server_config(&ca_pem, &server_pem, &server_key_pem).unwrap();
-    let listener = AgentTlsListener::new("127.0.0.1:0".parse().unwrap(), server_config)
+    let server_config =
+        build_agent_server_config(&ca_pem, &server_pem, &server_key_pem, &[]).unwrap();
+    let shared_acceptor = std::sync::Arc::new(std::sync::RwLock::new(
+        tokio_rustls::TlsAcceptor::from(server_config),
+    ));
+    let listener = AgentTlsListener::new("127.0.0.1:0".parse().unwrap(), shared_acceptor)
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap().remote_addr;
@@ -136,6 +162,117 @@ async fn mtls_binds_host_id_from_client_cert() {
         result.is_err(),
         "a connection without a client cert must be rejected at the TLS handshake"
     );
+
+    server.abort();
+}
+
+/// CRL enforcement (deferred-hardening follow-up): a client cert whose serial
+/// appears in the CA-signed CRL must fail the TLS handshake; a cert with no
+/// CRL entry (unknown revocation status) must still connect —
+/// `allow_unknown_revocation_status` is required so certs issued before leaf
+/// persistence (migration 035) aren't locked out.
+#[tokio::test]
+async fn mtls_rejects_crl_revoked_client_cert() {
+    // The other test in this binary may have installed it already.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let (ca_pem, ca_cert, ca_key, server_pem, server_key_pem, client_pem, client_key_pem, _host_id) =
+        test_pki();
+
+    // Revoke the client cert's serial: parse it from the issued cert, then
+    // build a CRL signed by the same CA containing exactly that serial.
+    let (_, client_cert_pem) = parse_x509_pem(client_pem.as_bytes()).unwrap();
+    let client_cert = client_cert_pem.parse_x509().unwrap();
+    let crl_pem = rcgen::CertificateRevocationListParams {
+        this_update: OffsetDateTime::now_utc() - ::time::Duration::hours(1),
+        next_update: OffsetDateTime::now_utc() + ::time::Duration::hours(24),
+        crl_number: rcgen::SerialNumber::from_slice(&[1]),
+        issuing_distribution_point: None,
+        revoked_certs: vec![rcgen::RevokedCertParams {
+            serial_number: rcgen::SerialNumber::from_slice(client_cert.raw_serial()),
+            revocation_time: OffsetDateTime::now_utc(),
+            reason_code: Some(rcgen::RevocationReason::KeyCompromise),
+            invalidity_date: None,
+        }],
+        key_identifier_method: rcgen::KeyIdMethod::Sha256,
+    }
+    .signed_by(&ca_cert, &ca_key)
+    .unwrap()
+    .pem()
+    .unwrap();
+
+    let revoked_config =
+        build_agent_server_config(&ca_pem, &server_pem, &server_key_pem, &[crl_pem]).unwrap();
+    let revoked_acceptor = std::sync::Arc::new(std::sync::RwLock::new(
+        tokio_rustls::TlsAcceptor::from(revoked_config),
+    ));
+    let listener = AgentTlsListener::new("127.0.0.1:0".parse().unwrap(), revoked_acceptor)
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap().remote_addr;
+
+    let app = Router::new().route("/api/v1/agent/whoami", get(whoami));
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<ClientCertInfo>(),
+        )
+        .await;
+    });
+
+    // 1) The revoked cert fails at the TLS handshake.
+    let identity =
+        reqwest::Identity::from_pem(format!("{client_pem}\n{client_key_pem}").as_bytes()).unwrap();
+    let client = reqwest::Client::builder()
+        .use_rustls_tls()
+        .tls_built_in_root_certs(false)
+        .identity(identity)
+        // Verifying the CLIENT-cert revocation, not the server cert.
+        .danger_accept_invalid_certs(true)
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let result = client
+        .get(format!("https://{addr}/api/v1/agent/whoami"))
+        .send()
+        .await;
+    assert!(
+        result.is_err(),
+        "a CRL-revoked client cert must be rejected at the TLS handshake"
+    );
+
+    // 2) A cert with no CRL entry (unknown revocation status) still connects:
+    //    a second, unrevoked client cert issued by the same CA.
+    let other_id = Uuid::new_v4();
+    let mut other_params = CertificateParams::new(Vec::new()).unwrap();
+    let mut other_dn = DistinguishedName::new();
+    other_dn.push(DnType::CommonName, other_id.to_string());
+    other_params.distinguished_name = other_dn;
+    other_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    let other_key = KeyPair::generate().unwrap();
+    let other_pem = other_params
+        .signed_by(&other_key, &ca_cert, &ca_key)
+        .unwrap()
+        .pem();
+    let other_identity = reqwest::Identity::from_pem(
+        format!("{other_pem}\n{}", other_key.serialize_pem()).as_bytes(),
+    )
+    .unwrap();
+    let other_client = reqwest::Client::builder()
+        .use_rustls_tls()
+        .tls_built_in_root_certs(false)
+        .identity(other_identity)
+        .danger_accept_invalid_certs(true)
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let resp = other_client
+        .get(format!("https://{addr}/api/v1/agent/whoami"))
+        .send()
+        .await
+        .expect("unknown-revocation-status cert must still connect");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), other_id.to_string());
 
     server.abort();
 }

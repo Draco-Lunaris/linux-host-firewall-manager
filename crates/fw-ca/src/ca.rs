@@ -13,10 +13,11 @@
 //! is what is served to agents (stable across restarts).
 
 use rcgen::{
-    BasicConstraints, Certificate, CertificateParams, CertificateSigningRequestParams,
-    DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
+    BasicConstraints, Certificate, CertificateParams, CertificateRevocationListParams,
+    CertificateSigningRequestParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
+    KeyIdMethod, KeyPair, KeyUsagePurpose, RevocationReason, RevokedCertParams, SerialNumber,
 };
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use std::path::Path;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
@@ -27,6 +28,10 @@ const CA_VALIDITY_YEARS: i64 = 10;
 const HOST_CERT_VALIDITY_YEARS: i64 = 1;
 /// The lifetime of a server cert issued for the manager's own listeners.
 const SERVER_CERT_VALIDITY_YEARS: i64 = 1;
+/// How long a generated CRL stays fresh (`next_update`). Consumers should
+/// re-fetch at least this often; the CRL is regenerated on demand at each
+/// startup and on each revocation.
+const CRL_NEXT_UPDATE_HOURS: i64 = 24;
 
 pub struct CertAuthority {
     /// Filesystem base for ca.pem / ca.key.pem.
@@ -42,6 +47,10 @@ pub struct CertAuthority {
 #[derive(Debug, Clone)]
 pub struct SignedCert {
     pub cert_pem: String,
+    /// The issued cert's x509 serial, hex-encoded (lowercase, no prefix). The
+    /// serial is chosen here (not by rcgen) so the issuer can persist it and
+    /// later name it in the CRL.
+    pub serial_hex: String,
     /// CA chain to ship to the agent (the pinned CA cert).
     pub ca_chain: Vec<String>,
     /// CRL PEM, if any (deferred — None for now).
@@ -148,6 +157,13 @@ impl CertAuthority {
         dn.push(DnType::OrganizationName, "Firewall Manager Agent");
         csr.params.distinguished_name = dn;
 
+        // Explicit serial: the issuer must know the serial it issued so it can
+        // persist it and revoke the cert by serial later (CRL). A UUID's 16
+        // bytes are random and collision-impractical, matching x509 serial
+        // practice (≤20 octets, positive).
+        let serial = Uuid::new_v4();
+        csr.params.serial_number = Some(SerialNumber::from_slice(serial.as_bytes()));
+
         // The agent's key is used for both server (mTLS listener) and client
         // (check-in) roles in the pull model.
         csr.params.extended_key_usages = vec![
@@ -169,6 +185,7 @@ impl CertAuthority {
 
         Ok(SignedCert {
             cert_pem,
+            serial_hex: hex::encode(serial.as_bytes()),
             ca_chain: vec![self.ca_cert_pem.clone()],
             crl_pem: None,
         })
@@ -228,6 +245,66 @@ impl CertAuthority {
             cert_pem: cert.pem(),
             key_pem: key.serialize_pem(),
         })
+    }
+
+    /// Generate a CRL signed by this CA from the `certificates` table.
+    ///
+    /// Bundles every cert with `status = 'revoked'` that has not yet naturally
+    /// expired (pruning naturally-expired certs keeps the CRL small) into an
+    /// X.509 v2 CRL signed by the CA. The manager's mTLS client verifier
+    /// consumes this to reject revoked host certs at the TLS handshake.
+    ///
+    /// Generated on demand (startup + after each revocation): at LHFM's scale
+    /// this is a small query and a KB-range CRL, so no caching is warranted.
+    pub async fn generate_crl(&self, db: &PgPool) -> Result<String, crate::error::CertError> {
+        let rows = sqlx::query(
+            "SELECT serial_number, revoked_at \
+             FROM certificates \
+             WHERE status = 'revoked'::cert_status \
+               AND revoked_at IS NOT NULL \
+               AND expires_at > NOW() \
+             ORDER BY revoked_at ASC",
+        )
+        .fetch_all(db)
+        .await?;
+
+        let mut revoked_certs = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let serial_hex: String = row.try_get("serial_number")?;
+            let revoked_at: chrono::DateTime<chrono::Utc> = row.try_get("revoked_at")?;
+
+            // serial_number is stored hex-encoded (see sign_csr).
+            let serial_bytes = hex::decode(serial_hex.trim())
+                .map_err(|e| crate::error::CertError::Rcgen(format!("serial_number hex: {e}")))?;
+            let revocation_time = OffsetDateTime::from_unix_timestamp(revoked_at.timestamp())
+                .unwrap_or_else(|_| OffsetDateTime::now_utc());
+
+            revoked_certs.push(RevokedCertParams {
+                serial_number: SerialNumber::from_slice(&serial_bytes),
+                revocation_time,
+                reason_code: Some(RevocationReason::Unspecified),
+                invalidity_date: None,
+            });
+        }
+
+        let now = OffsetDateTime::now_utc();
+        let params = CertificateRevocationListParams {
+            this_update: now,
+            next_update: now
+                .checked_add(Duration::hours(CRL_NEXT_UPDATE_HOURS))
+                .unwrap_or(now),
+            crl_number: SerialNumber::from_slice(&now.unix_timestamp().to_be_bytes()),
+            issuing_distribution_point: None,
+            revoked_certs,
+            key_identifier_method: KeyIdMethod::Sha256,
+        };
+        let crl = params
+            .signed_by(&self.ca_cert, &self.ca_key)
+            .map_err(|e| crate::error::CertError::Rcgen(e.to_string()))?;
+        let crl_pem = crl
+            .pem()
+            .map_err(|e| crate::error::CertError::Rcgen(e.to_string()))?;
+        Ok(crl_pem)
     }
 
     /// The pinned CA cert PEM (trust anchor for the agent mTLS client verifier).

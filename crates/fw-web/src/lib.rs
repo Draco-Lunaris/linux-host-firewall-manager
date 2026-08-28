@@ -87,6 +87,11 @@ pub struct AppState {
     pub auth_config: Arc<AuthConfig>,
     pub ws_tickets: Arc<DashMap<String, WsTicket>>,
     pub ca: Arc<fw_ca::CertAuthority>,
+    /// Shared acceptor for the 8443 agent mTLS listener. `Some` while the
+    /// listener is enabled: the revoke endpoint regenerates the CRL and swaps
+    /// this so revocation takes effect on the next handshake, without a
+    /// restart. `None` when `agent_tls_sans` is empty (listener disabled).
+    pub agent_tls_acceptor: Option<agent_listener::SharedTlsAcceptor>,
     pub approved_enrollments: Arc<DashMap<String, ApprovedEntry>>,
     /// Per-host force-check-in notifiers (SEC-008 pull model). An operator
     /// `POST /hosts/{id}/force-check-in` calls `notify_one()` here; the agent's
@@ -165,7 +170,7 @@ pub fn build_router(state: AppState) -> Router<()> {
         .nest("/drift", routes::drift::router())
         .nest("/settings", routes::settings::router())
         .nest("/admin", routes::enrollment::admin_router())
-        .layer(GovernorLayer::new(api_governor))
+        .layer(GovernorLayer::new(Arc::clone(&api_governor)))
         .route_layer(middleware::from_fn(move |req, next| {
             let auth_config = auth_config.clone();
             require_auth(auth_config, req, next)
@@ -175,6 +180,10 @@ pub fn build_router(state: AppState) -> Router<()> {
         .route("/status/health", get(routes::health::health_handler))
         .nest("/api/v1/auth", auth_public_router)
         .nest("/api/v1", enrollment_router)
+        .nest(
+            "/api/v1",
+            routes::pki::router().layer(GovernorLayer::new(Arc::clone(&api_governor))),
+        )
         .nest("/api/v1", protected_api)
         .fallback_service(
             ServeDir::new(&static_dir)

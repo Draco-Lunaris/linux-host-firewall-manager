@@ -68,5 +68,26 @@ async fn revoke_cert(
         None,
     )
     .await;
+
+    // Hot-swap the agent listener's client verifier with a freshly generated
+    // CRL so the revocation takes effect on the next handshake, without a
+    // restart. If the rebuild fails the revocation still stands in the DB and
+    // is enforced at the next restart — never fail the API call over it.
+    if let Some(shared) = &state.agent_tls_acceptor {
+        match crate::agent_cert::build_agent_tls_config(&state.ca, &state.db, &state.config).await {
+            Ok(config) => {
+                crate::agent_listener::swap_shared_acceptor(shared, config);
+                tracing::info!(cert_id = %id, "agent TLS verifier reloaded with refreshed CRL");
+            }
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    %id,
+                    "CRL hot-swap failed — revocation takes effect at next restart"
+                );
+            }
+        }
+    }
+
     Ok(StatusCode::OK)
 }

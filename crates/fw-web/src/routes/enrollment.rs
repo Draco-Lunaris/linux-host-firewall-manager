@@ -283,10 +283,19 @@ async fn approve_enrollment(
         .sign_csr(&csr, host_id)
         .map_err(|e| fw_core::AppError::Internal(format!("CA sign failed: {e}")))?;
 
-    // NOTE: the issued host cert is delivered to the agent via the PkiBundle. Persisting
-    // host certs in the `certificates` table (for list/revoke/CRL) is deferred to the CRL
-    // follow-up — the ca_tier CHECK currently only allows root/intermediate, and CRL
-    // revocation needs the real x509 serial, neither of which is wired yet.
+    // Persist the leaf cert so it can be revoked by serial and fed into the CRL
+    // (the 8443 verifier rejects revoked client certs at the TLS handshake).
+    // Expiry mirrors sign_csr's HOST_CERT_VALIDITY_YEARS (365 days).
+    sqlx::query(
+        "INSERT INTO certificates (host_id, serial_number, common_name, status, issued_at, expires_at, cert_pem, ca_tier)
+         VALUES ($1, $2, $3, 'active', NOW(), NOW() + INTERVAL '365 days', $4, 'leaf')",
+    )
+    .bind(host_id)
+    .bind(&signed.serial_hex)
+    .bind(host_id.to_string())
+    .bind(&signed.cert_pem)
+    .execute(&state.db)
+    .await?;
     let pki_bundle = fw_core::models::PkiBundle {
         ca_chain: signed.ca_chain,
         server_cert: signed.cert_pem,

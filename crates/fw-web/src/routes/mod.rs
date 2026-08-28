@@ -8,6 +8,7 @@ pub mod enrollment;
 pub mod groups;
 pub mod health;
 pub mod hosts;
+pub mod pki;
 pub mod policy_sets;
 pub mod rule_groups;
 pub mod rules;
