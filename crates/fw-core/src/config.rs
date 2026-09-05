@@ -59,6 +59,16 @@ pub struct SecurityConfig {
     /// agent-listener cert. An empty list disables the agent mTLS listener.
     #[serde(default = "default_agent_tls_sans")]
     pub agent_tls_sans: Vec<String>,
+    /// Optional upstream sub-CA (intermediate) chain to import: the chain file
+    /// holds the sub-CA cert followed by its upstream chain (root last), the
+    /// key file holds the sub-CA's private key. When both files exist the
+    /// sub-CA becomes the issuing CA (agent certs, listener cert, CRLs) and
+    /// the self-generated root stays as a verification anchor for already-
+    /// enrolled agents. Leave the paths absent/unset to use the self-root.
+    #[serde(default = "default_ca_issuing_chain_path")]
+    pub ca_issuing_chain_path: String,
+    #[serde(default = "default_ca_issuing_key_path")]
+    pub ca_issuing_key_path: String,
 }
 
 fn default_web_tls_cert_path() -> String {
@@ -79,6 +89,14 @@ fn default_agent_tls_key_path() -> String {
 
 fn default_agent_tls_sans() -> Vec<String> {
     vec!["localhost".to_string(), "127.0.0.1".to_string()]
+}
+
+fn default_ca_issuing_chain_path() -> String {
+    "/etc/firewall-manager/ca/issuing/chain.pem".to_string()
+}
+
+fn default_ca_issuing_key_path() -> String {
+    "/etc/firewall-manager/ca/issuing/key.pem".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]

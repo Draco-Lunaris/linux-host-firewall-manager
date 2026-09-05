@@ -31,10 +31,34 @@ async fn main() -> anyhow::Result<()> {
         Some(std::sync::Arc::new(db.clone())),
     ));
 
-    // Initialize CA (generates + persists the root CA on first run)
-    let ca = std::sync::Arc::new(
-        fw_ca::CertAuthority::init("/etc/firewall-manager/ca".to_string(), &db).await?,
-    );
+    // Initialize CA (generates + persists the root CA on first run), then load
+    // an imported upstream sub-CA if the operator configured one. Both paths
+    // must resolve together — one file without the other is a misconfiguration.
+    let ca = fw_ca::CertAuthority::init("/etc/firewall-manager/ca".to_string(), &db).await?;
+    let ca = {
+        let chain = std::path::Path::new(&config.security.ca_issuing_chain_path).exists();
+        let key = std::path::Path::new(&config.security.ca_issuing_key_path).exists();
+        match (chain, key) {
+            (true, true) => {
+                let ca = ca.with_issuing_ca(
+                    &config.security.ca_issuing_chain_path,
+                    &config.security.ca_issuing_key_path,
+                )?;
+                tracing::info!(
+                    chain = %config.security.ca_issuing_chain_path,
+                    "imported upstream sub-CA — it is now the issuing CA; the self-generated root remains a verification anchor for existing agents"
+                );
+                ca
+            }
+            (true, false) | (false, true) => {
+                return Err(anyhow::anyhow!(
+                    "ca_issuing_chain_path and ca_issuing_key_path must both point at existing files (one is missing)"
+                ));
+            }
+            (false, false) => ca,
+        }
+    };
+    let ca = std::sync::Arc::new(ca);
 
     // Capture server config before the AppConfig is moved into state.
     let agent_host = config.server.host.clone();

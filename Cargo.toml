@@ -58,7 +58,7 @@ tokio-rustls = { version = "0.26" }
 rustls-pemfile = { version = "2" }
 
 # Certificate Authority
-rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
+rcgen = { version = "0.14", features = ["pem", "x509-parser"] }
 pem = { version = "3" }
 time = { version = "0.3", features = ["std"] }
 

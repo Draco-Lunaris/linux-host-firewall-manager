@@ -18,12 +18,14 @@ async fn get_ca_info(
         sqlx::query_scalar("SELECT cert_pem FROM certificates WHERE ca_tier = 'root' LIMIT 1")
             .fetch_optional(&state.db)
             .await?;
-    let intermediate_cert: Option<String> = sqlx::query_scalar("SELECT cert_pem FROM certificates WHERE ca_tier = 'intermediate' AND status = 'active' LIMIT 1").fetch_optional(&state.db).await?;
+    // The imported upstream sub-CA chain, when one is configured (config file
+    // paths, loaded at startup). Empty when the self-generated root issues.
+    let issuing_chain = state.ca.issuing_chain_pems();
     Ok(Json(serde_json::json!({
         "root_ca": root_cert.is_some(),
-        "intermediate_ca": intermediate_cert.is_some(),
         "root_ca_pem": root_cert,
-        "intermediate_ca_pem": intermediate_cert,
+        "issuing_ca": issuing_chain.is_some(),
+        "issuing_chain_pem": issuing_chain.map(|c| c.to_vec()),
     })))
 }
 
@@ -33,12 +35,14 @@ async fn get_crl(
 ) -> Result<Json<serde_json::Value>, fw_core::AppError> {
     // Generated on demand from the `certificates` table (same call the agent
     // verifier and the public /api/v1/pki/crl.pem endpoint use); a small
-    // query at LHFM's scale. The same CRL is also available unauthenticated
-    // at /api/v1/pki/crl.pem for consumers without a manager login.
-    let crl_pem = state
+    // query at LHFM's scale. One CRL per issuing CA (self-root for legacy
+    // rows, imported sub-CA when configured). The same CRLs are also
+    // available unauthenticated at /api/v1/pki/crl.pem for consumers without
+    // a manager login.
+    let crls = state
         .ca
-        .generate_crl(&state.db)
+        .generate_crls(&state.db)
         .await
         .map_err(|e| fw_core::AppError::Internal(format!("CRL generation failed: {e}")))?;
-    Ok(Json(serde_json::json!({ "crl_pem": crl_pem })))
+    Ok(Json(serde_json::json!({ "crl_pems": crls })))
 }

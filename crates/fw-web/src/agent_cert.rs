@@ -40,16 +40,20 @@ pub enum CertOutcome {
 /// Ensure a CA-signed listener cert exists at `cert_path` / `key_path`.
 ///
 /// Reuses the existing cert when it is readable, valid for longer than the
-/// re-issue margin, and carries exactly the configured SANs; otherwise issues a
-/// replacement from the manager CA. The key is written with 0600.
+/// re-issue margin, carries exactly the configured SANs, and was issued by the
+/// current issuing CA; otherwise issues a replacement. The issuer check makes
+/// importing (or changing) an upstream sub-CA re-issue the listener cert under
+/// the new CA at startup — the old cert wouldn't chain to the chain agents pin.
+/// The key is written with 0600.
 pub fn ensure_agent_listener_cert(
     ca: &CertAuthority,
     cert_path: &str,
     key_path: &str,
     sans: &[String],
 ) -> Result<CertOutcome, CertEnsureError> {
+    let expected_issuer = ca.issuing_subject_cn().to_string();
     let reusable = match std::fs::read_to_string(cert_path) {
-        Ok(pem) => existing_cert_reusable(&pem, sans),
+        Ok(pem) => existing_cert_reusable(&pem, sans, &expected_issuer),
         Err(_) => None,
     };
 
@@ -59,7 +63,7 @@ pub fn ensure_agent_listener_cert(
 
     let reason = match reusable {
         Some(true) => "key missing",
-        Some(false) => "expiring soon or unreadable",
+        Some(false) => "expiring soon, wrong issuing CA, or unreadable",
         None => "missing",
     };
     tracing::info!(cert_path, reason, "issuing CA-signed agent-listener cert");
@@ -72,12 +76,29 @@ pub fn ensure_agent_listener_cert(
     Ok(CertOutcome::Issued)
 }
 
-/// `Some(true)` if the existing cert parses, outlives the re-issue margin, and
-/// carries exactly the configured SANs; `Some(false)` if the cert parses but
-/// fails those checks; `None` if it is unreadable or unparsable.
-fn existing_cert_reusable(cert_pem: &str, sans: &[String]) -> Option<bool> {
+/// `Some(true)` if the existing cert parses, outlives the re-issue margin,
+/// carries exactly the configured SANs, and was issued by the expected CA;
+/// `Some(false)` if the cert parses but fails those checks; `None` if it is
+/// unreadable or unparsable.
+fn existing_cert_reusable(
+    cert_pem: &str,
+    sans: &[String],
+    expected_issuer_cn: &str,
+) -> Option<bool> {
     let (_, pem) = parse_x509_pem(cert_pem.as_bytes()).ok()?;
     let cert = pem.parse_x509().ok()?;
+
+    // The issuer must be the current issuing CA: an imported (or changed)
+    // upstream sub-CA invalidates the old listener cert — agents validate the
+    // server cert against the chain they pin, which comes from the new CA.
+    let issuer_cn = cert
+        .issuer()
+        .iter_common_name()
+        .next()
+        .and_then(|cn| cn.as_str().ok())?;
+    if issuer_cn != expected_issuer_cn {
+        return Some(false);
+    }
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
     let margin = REISSUE_MARGIN_DAYS * 24 * 3600;
@@ -127,23 +148,29 @@ fn restrict_key_permissions(path: &str) {
     let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
 }
 
-/// Build the agent-listener `ServerConfig`: the CA-signed agent cert, with a
-/// freshly generated CRL fed into the client verifier (revoked client certs
-/// are rejected at the TLS handshake). Used at startup and again on every
-/// revocation, when the rebuilt config is hot-swapped into the listener.
+/// Build the agent-listener `ServerConfig`: the CA-signed agent cert, with
+/// freshly generated CRLs fed into the client verifier (revoked client certs
+/// are rejected at the TLS handshake). One CRL per issuing CA (self-root for
+/// legacy rows, imported sub-CA when configured). Used at startup and again
+/// on every revocation, when the rebuilt config is hot-swapped into the
+/// listener.
 pub async fn build_agent_tls_config(
     ca: &fw_ca::CertAuthority,
     db: &sqlx::PgPool,
     config: &fw_core::config::AppConfig,
 ) -> Result<std::sync::Arc<rustls::ServerConfig>, anyhow::Error> {
-    let crl_pem = ca.generate_crl(db).await?;
+    let crl_pems = ca.generate_crls(db).await?;
     let server_cert_pem = std::fs::read_to_string(&config.security.agent_tls_cert_path)?;
     let server_key_pem = std::fs::read_to_string(&config.security.agent_tls_key_path)?;
+    // Verification anchors: the self-root plus the imported chain (both CAs
+    // may have issued live certs).
+    let mut anchors = vec![ca.root_cert_pem().to_string()];
+    anchors.extend(ca.ca_chain_for_agents());
     Ok(crate::agent_listener::build_agent_server_config(
-        ca.root_cert_pem(),
+        &anchors,
         &server_cert_pem,
         &server_key_pem,
-        std::slice::from_ref(&crl_pem),
+        &crl_pems,
     )?)
 }
 

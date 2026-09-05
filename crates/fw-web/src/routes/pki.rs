@@ -24,15 +24,18 @@ pub fn router() -> Router<std::sync::Arc<AppState>> {
 /// lets intermediate caches serve it: consumers refresh at least daily, so a
 /// 1-hour cache balances freshness against load.
 async fn get_crl_pem(State(state): State<std::sync::Arc<AppState>>) -> impl IntoResponse {
-    match state.ca.generate_crl(&state.db).await {
-        Ok(crl_pem) => (
+    // One CRL per issuing CA (self-root for legacy rows, imported sub-CA when
+    // configured), concatenated as a PEM bundle — every block is an
+    // independent, signature-verifiable CRL.
+    match state.ca.generate_crls(&state.db).await {
+        Ok(crls) => (
             StatusCode::OK,
             [(
                 header::CONTENT_TYPE,
                 "application/x-pem-file; charset=utf-8",
             )],
             [(header::CACHE_CONTROL, "max-age=3600")],
-            crl_pem,
+            crls.join(""),
         )
             .into_response(),
         Err(e) => {
