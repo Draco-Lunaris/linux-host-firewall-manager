@@ -61,6 +61,7 @@ rustls-pemfile = { version = "2" }
 rcgen = { version = "0.14", features = ["pem", "x509-parser"] }
 pem = { version = "3" }
 time = { version = "0.3", features = ["std"] }
+x509-parser = { version = "0.18" }
 
 # Config
 config = { version = "0.15" }

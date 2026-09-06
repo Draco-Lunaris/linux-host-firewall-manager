@@ -164,8 +164,7 @@ pub async fn build_agent_tls_config(
     let server_key_pem = std::fs::read_to_string(&config.security.agent_tls_key_path)?;
     // Verification anchors: the self-root plus the imported chain (both CAs
     // may have issued live certs).
-    let mut anchors = vec![ca.root_cert_pem().to_string()];
-    anchors.extend(ca.ca_chain_for_agents());
+    let anchors = ca.verification_anchors();
     Ok(crate::agent_listener::build_agent_server_config(
         &anchors,
         &server_cert_pem,

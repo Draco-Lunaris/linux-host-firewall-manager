@@ -18,8 +18,11 @@ time = { workspace = true }
 uuid = { workspace = true }
 hex = { workspace = true }
 base64 = { workspace = true }
-x509-parser = "0.18"
+x509-parser = { workspace = true }
 rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
 tokio = { workspace = true }
 async-trait = "0.1"
+
+[dev-dependencies]
+time = { workspace = true }
