@@ -205,6 +205,71 @@ async fn import_rejects_cert_without_crl_sign() {
 }
 
 #[tokio::test]
+async fn import_rejects_expired_sub_ca() {
+    let (tree, chain_path, key_path, _root_pem) = TestTree::new();
+
+    // Upstream root (valid) + a sub-CA whose validity window is entirely in
+    // the past.
+    let upstream_key = KeyPair::generate().unwrap();
+    let upstream_cert = ca_key_usage_params("Upstream Corp Root CA")
+        .self_signed(&upstream_key)
+        .unwrap();
+    let upstream_issuer = Issuer::new(ca_key_usage_params("Upstream Corp Root CA"), upstream_key);
+    let sub_key = KeyPair::generate().unwrap();
+    let mut sub_params = ca_key_usage_params("Upstream Corp Sub-CA");
+    let now = ::time::OffsetDateTime::now_utc();
+    sub_params.not_before = now - ::time::Duration::days(2);
+    sub_params.not_after = now - ::time::Duration::days(1);
+    let sub_cert = sub_params.signed_by(&sub_key, &upstream_issuer).unwrap();
+
+    std::fs::write(
+        &chain_path,
+        format!("{}\n{}", sub_cert.pem(), upstream_cert.pem()),
+    )
+    .unwrap();
+    std::fs::write(&key_path, sub_key.serialize_pem()).unwrap();
+
+    let ca = manager_ca(&tree).await;
+    let Err(err) = ca.with_issuing_ca(&chain_path, &key_path) else {
+        panic!("import of an expired sub-CA must fail");
+    };
+    assert!(
+        err.to_string().contains("expired"),
+        "expected expired-sub-CA rejection, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn import_rejects_broken_chain() {
+    let (tree, chain_path, key_path, _root_pem) = TestTree::new();
+
+    // A sub-CA signed by upstream root A...
+    let root_a_key = KeyPair::generate().unwrap();
+    let root_a_issuer = Issuer::new(ca_key_usage_params("Upstream Corp Root CA"), root_a_key);
+    let sub_key = KeyPair::generate().unwrap();
+    let sub_cert = ca_key_usage_params("Upstream Corp Sub-CA")
+        .signed_by(&sub_key, &root_a_issuer)
+        .unwrap();
+    // ...but the chain file ships an unrelated root B (issuer/subject mismatch).
+    let root_b_key = KeyPair::generate().unwrap();
+    let root_b = ca_key_usage_params("Unrelated Root B")
+        .self_signed(&root_b_key)
+        .unwrap();
+
+    std::fs::write(&chain_path, format!("{}\n{}", sub_cert.pem(), root_b.pem())).unwrap();
+    std::fs::write(&key_path, sub_key.serialize_pem()).unwrap();
+
+    let ca = manager_ca(&tree).await;
+    let Err(err) = ca.with_issuing_ca(&chain_path, &key_path) else {
+        panic!("import of a broken chain must fail");
+    };
+    assert!(
+        err.to_string().contains("broken"),
+        "expected broken-chain rejection, got: {err}"
+    );
+}
+
+#[tokio::test]
 async fn without_import_the_root_issues() {
     let (tree, _chain_path, _key_path, root_pem) = TestTree::new();
     let ca = manager_ca(&tree).await;

@@ -173,7 +173,7 @@ pub fn build_agent_server_config(
                 std::io::Error,
             > {
                 Ok(rustls::pki_types::CertificateRevocationListDer::from(
-                    pem_to_der(pem)?,
+                    fw_ca::pem_to_der(pem).map_err(io_err)?,
                 ))
             },
         )
@@ -204,13 +204,4 @@ pub fn build_agent_server_config(
 
 fn io_err<E: std::fmt::Display>(e: E) -> std::io::Error {
     std::io::Error::other(e.to_string())
-}
-
-/// Decode a single PEM block (e.g. `-----BEGIN X509 CRL-----`) to its DER bytes.
-fn pem_to_der(pem: &str) -> Result<Vec<u8>, std::io::Error> {
-    use base64::Engine as _;
-    let b64: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
-    base64::engine::general_purpose::STANDARD
-        .decode(b64.trim())
-        .map_err(|e| io_err(format!("invalid PEM base64: {e}")))
 }

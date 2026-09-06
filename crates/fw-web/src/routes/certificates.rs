@@ -52,10 +52,16 @@ async fn revoke_cert(
             "Admin role required".to_string(),
         ));
     }
-    sqlx::query("UPDATE certificates SET status = 'revoked', revoked_at = NOW() WHERE id = $1")
-        .bind(id)
-        .execute(&state.db)
-        .await?;
+    let result =
+        sqlx::query("UPDATE certificates SET status = 'revoked', revoked_at = NOW() WHERE id = $1")
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+    if result.rows_affected() == 0 {
+        return Err(fw_core::AppError::NotFound(
+            "Certificate not found".to_string(),
+        ));
+    }
     let _ = fw_core::audit::log_event(
         &state.db,
         "certificate_revoked",

@@ -168,6 +168,22 @@ impl CertAuthority {
         let (_rem, sub_cert) = x509_parser::parse_x509_certificate(&sub_cert_der)
             .map_err(|e| crate::error::CertError::Rcgen(format!("issuing CA cert: {e}")))?;
 
+        // The sub-CA must be within its validity window now; an expired (or
+        // not-yet-valid) signing cert would only surface later at issuance.
+        let now = OffsetDateTime::now_utc();
+        let not_before = sub_cert.validity().not_before.to_datetime();
+        let not_after = sub_cert.validity().not_after.to_datetime();
+        if now < not_before {
+            return Err(crate::error::CertError::Rcgen(format!(
+                "issuing CA cert is not yet valid (not_before {not_before} is in the future)"
+            )));
+        }
+        if now > not_after {
+            return Err(crate::error::CertError::Rcgen(format!(
+                "issuing CA cert is expired (not_after {not_after} is in the past)"
+            )));
+        }
+
         if !sub_cert.is_ca() {
             return Err(crate::error::CertError::Rcgen(
                 "issuing CA cert is not a CA (basicConstraints CA:true missing)".to_string(),
@@ -197,6 +213,59 @@ impl CertAuthority {
             return Err(crate::error::CertError::Rcgen(
                 "issuing CA key does not match the sub-CA certificate".to_string(),
             ));
+        }
+
+        // The chain must actually chain: each cert's issuer is an exact copy of
+        // the next cert's subject (RFC 5280 §4.1.2.4), every cert is within its
+        // validity window, and the terminal cert (upstream root) is self-signed.
+        // A broken, mis-ordered, or incomplete chain is rejected here rather
+        // than failing later at agent verification.
+        let mut name_links: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(chain_pems.len());
+        name_links.push((
+            sub_cert.tbs_certificate.issuer.as_raw().to_vec(),
+            sub_cert.tbs_certificate.subject.as_raw().to_vec(),
+        ));
+        for (i, pem) in chain_pems.iter().enumerate().skip(1) {
+            let der = pem_to_der(pem)?;
+            let (_rem, cert) = x509_parser::parse_x509_certificate(&der)
+                .map_err(|e| crate::error::CertError::Rcgen(format!("chain cert #{i}: {e}")))?;
+            let nb = cert.validity().not_before.to_datetime();
+            let na = cert.validity().not_after.to_datetime();
+            if now < nb {
+                return Err(crate::error::CertError::Rcgen(format!(
+                    "chain cert #{i} is not yet valid (not_before {nb} is in the future)"
+                )));
+            }
+            if now > na {
+                return Err(crate::error::CertError::Rcgen(format!(
+                    "chain cert #{i} is expired (not_after {na} is in the past)"
+                )));
+            }
+            name_links.push((
+                cert.tbs_certificate.issuer.as_raw().to_vec(),
+                cert.tbs_certificate.subject.as_raw().to_vec(),
+            ));
+        }
+        for (i, (issuer_raw, subject_raw)) in name_links.iter().enumerate() {
+            let is_terminal = i + 1 == name_links.len();
+            let expected = name_links
+                .get(i + 1)
+                .map(|(_, s)| s.as_slice())
+                .unwrap_or(subject_raw.as_slice());
+            if issuer_raw.as_slice() != expected {
+                let msg = if is_terminal {
+                    "issuing CA chain does not terminate in a self-signed root \
+                     (terminal cert's issuer != subject)"
+                        .to_string()
+                } else {
+                    format!(
+                        "issuing CA chain is broken at cert #{i}: its issuer does not \
+                         match cert #{}'s subject",
+                        i + 1
+                    )
+                };
+                return Err(crate::error::CertError::Rcgen(msg));
+            }
         }
 
         let serial_hex = hex::encode(sub_cert.raw_serial());
@@ -476,25 +545,38 @@ impl CertAuthority {
 
         let now = OffsetDateTime::now_utc();
         let mut crls = Vec::new();
-        for (revoked_certs, issuer) in [
-            (root_revoked, &self.root),
+        for (revoked_certs, issuer, issuer_key) in [
+            (root_revoked, &self.root, "root"),
             (
                 issuing_revoked,
                 self.issuing
                     .as_ref()
                     .map(|ca| &ca.issuer)
                     .unwrap_or(&self.root),
+                "issuing",
             ),
         ] {
             if revoked_certs.is_empty() {
                 continue;
             }
+            // Draw the next monotonic CRL number for this issuer (RFC 5280
+            // §5.2.3). A wall-clock timestamp can collide (two CRLs in the same
+            // second) or go backwards (NTP step), so the number comes from a
+            // persistent, atomically-incremented counter instead.
+            let crl_number: i64 = sqlx::query_scalar(
+                "INSERT INTO crl_counter (issuer_key, last_number) VALUES ($1, 1) \
+                 ON CONFLICT (issuer_key) DO UPDATE SET last_number = last_number + 1 \
+                 RETURNING last_number",
+            )
+            .bind(issuer_key)
+            .fetch_one(db)
+            .await?;
             let params = CertificateRevocationListParams {
                 this_update: now,
                 next_update: now
                     .checked_add(Duration::hours(CRL_NEXT_UPDATE_HOURS))
                     .unwrap_or(now),
-                crl_number: SerialNumber::from_slice(&now.unix_timestamp().to_be_bytes()),
+                crl_number: SerialNumber::from_slice(&crl_number.to_be_bytes()),
                 issuing_distribution_point: None,
                 revoked_certs,
                 key_identifier_method: KeyIdMethod::Sha256,
@@ -536,7 +618,7 @@ fn split_pem_chain(bundle: &str) -> Vec<String> {
 }
 
 /// Decode a single PEM block to its DER bytes.
-fn pem_to_der(pem: &str) -> Result<Vec<u8>, crate::error::CertError> {
+pub fn pem_to_der(pem: &str) -> Result<Vec<u8>, crate::error::CertError> {
     use base64::Engine as _;
     let b64: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
     base64::engine::general_purpose::STANDARD
