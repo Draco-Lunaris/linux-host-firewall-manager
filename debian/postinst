@@ -3,9 +3,16 @@ set -euo pipefail
 
 # postinst — Linux Host Firewall Manager
 # Runs after the .deb is installed or upgraded.
+#
+# First install is turnkey: creates the PostgreSQL role and database with a
+# random 25-character password, writes /etc/firewall-manager/config.toml,
+# starts the services, and prints the one-time initial admin password.
+# Upgrades keep the existing database and config untouched.
 
 case "$1" in
   configure)
+    INSTALL_EPOCH="$(date +%s)"
+
     # Create service user
     if ! id firewall-manager &>/dev/null; then
       useradd --system --no-create-home --shell /usr/sbin/nologin \
@@ -27,8 +34,10 @@ case "$1" in
     chmod 0750 /etc/firewall-manager
     chmod 0700 /etc/firewall-manager/keys
 
-    # Copy config if not present
+    # Copy config if not present (fresh install)
+    FRESH_INSTALL=0
     if [ ! -f /etc/firewall-manager/config.toml ]; then
+      FRESH_INSTALL=1
       cp /usr/share/firewall-manager/config.example.toml /etc/firewall-manager/config.toml
       chmod 0640 /etc/firewall-manager/config.toml
       chown firewall-manager:firewall-manager /etc/firewall-manager/config.toml
@@ -52,30 +61,95 @@ case "$1" in
       chmod 600 /etc/firewall-manager/tls/key.pem
     fi
 
-    # Reload systemd
+    # --- Database bootstrap (fresh installs only; upgrades keep the existing DB) ---
+    if [ "$FRESH_INSTALL" -eq 1 ]; then
+      # Random 25-character alphanumeric password — safe to embed in the
+      # connection URL and in SQL without escaping.
+      DB_PASS=""
+      while [ "${#DB_PASS}" -ne 25 ]; do
+        DB_PASS="$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9')"
+        DB_PASS="${DB_PASS:0:25}"
+      done
+
+      # Ensure PostgreSQL is running (postgresql-16 is a hard dependency)
+      if ! pg_isready -q 2>/dev/null; then
+        systemctl enable --now postgresql
+      fi
+
+      # Create the role; if a stale role exists, reset its password so the
+      # config written below always matches.
+      if runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='firewall_manager'" | grep -q 1; then
+        runuser -u postgres -- psql -v ON_ERROR_STOP=1 -c "ALTER ROLE firewall_manager WITH LOGIN PASSWORD '${DB_PASS}'"
+      else
+        runuser -u postgres -- psql -v ON_ERROR_STOP=1 -c "CREATE ROLE firewall_manager WITH LOGIN PASSWORD '${DB_PASS}'"
+      fi
+
+      # Create the database and grant privileges
+      if ! runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_database WHERE datname='firewall_manager'" | grep -q 1; then
+        runuser -u postgres -- psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE firewall_manager OWNER firewall_manager"
+      fi
+      runuser -u postgres -- psql -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE firewall_manager TO firewall_manager"
+
+      # Write the real database URL into the fresh config
+      sed -i "s|^url = .*|url = \"postgres://firewall_manager:${DB_PASS}@localhost/firewall_manager\"|" \
+        /etc/firewall-manager/config.toml
+      chown firewall-manager:firewall-manager /etc/firewall-manager/config.toml
+      chmod 0640 /etc/firewall-manager/config.toml
+    fi
+
+    # Reload systemd and start (or restart) the services.
+    # Note: `try-restart` only restarts units that are already running — it is
+    # a silent no-op for stopped units — so use plain `restart` (the stop half
+    # is a no-op when the unit is stopped). Do not fail the install if a
+    # service cannot come up yet; the summary below reports the state.
     systemctl daemon-reload
+    systemctl enable firewall-manager.target
+    systemctl restart firewall-manager-web.service firewall-manager-worker.service || true
+
+    # On a fresh install, wait for the web service to bootstrap the admin
+    # account and capture the one-time password it prints to the journal.
+    ADMIN_BLOCK=""
+    if [ "$FRESH_INSTALL" -eq 1 ]; then
+      for _ in $(seq 1 90); do
+        if [ "$(systemctl is-active firewall-manager-web.service 2>/dev/null || true)" = "failed" ]; then
+          break
+        fi
+        ADMIN_BLOCK="$(journalctl -u firewall-manager-web --since "@${INSTALL_EPOCH}" --no-pager -o cat 2>/dev/null \
+          | grep -A 3 'INITIAL ADMIN PASSWORD' | tail -n 4 || true)"
+        if [ -n "$ADMIN_BLOCK" ]; then
+          break
+        fi
+        sleep 1
+      done
+    fi
+
+    WEB_STATE="$(systemctl is-active firewall-manager-web.service 2>/dev/null || true)"
+    WORKER_STATE="$(systemctl is-active firewall-manager-worker.service 2>/dev/null || true)"
 
     echo ""
     echo "=== Linux Host Firewall Manager installed ==="
     echo ""
-    echo "Next steps:"
-    echo "  1. Configure PostgreSQL:"
-    echo "     sudo -u postgres psql <<EOF"
-    echo "     CREATE DATABASE firewall_manager;"
-    echo "     CREATE USER firewall_manager WITH PASSWORD 'your_secure_password';"
-    echo "     GRANT ALL PRIVILEGES ON DATABASE firewall_manager TO firewall_manager;"
-    echo "     EOF"
-    echo ""
-    echo "  2. Edit config: sudo nano /etc/firewall-manager/config.toml"
-    echo ""
-    echo "  3. Start services: sudo systemctl enable --now firewall-manager.target"
-    echo ""
-    echo "  4. Check logs: journalctl -u firewall-manager-web -f"
-    echo ""
-    echo "  5. Access: https://your-server-ip:443"
-    echo "     Default admin: username=admin"
-    echo "     Password is generated on first start and shown once in the logs:"
-    echo "       sudo journalctl -u firewall-manager-web | grep 'INITIAL ADMIN PASSWORD' -A 4"
+    if [ "$FRESH_INSTALL" -eq 1 ]; then
+      if [ -n "$ADMIN_BLOCK" ]; then
+        echo "Initial admin credentials (shown once — save them now):"
+        echo "$ADMIN_BLOCK"
+        echo ""
+      else
+        echo "The web service has not reported the initial admin password yet."
+        echo "Watch the logs and retrieve it once it appears:"
+        echo "  sudo journalctl -u firewall-manager-web -f"
+        echo "  sudo journalctl -u firewall-manager-web | grep -A 3 'INITIAL ADMIN PASSWORD'"
+        echo ""
+      fi
+    fi
+    echo "Service state: web=${WEB_STATE} worker=${WORKER_STATE}"
+    if [ "$WEB_STATE" != "active" ] || [ "$WORKER_STATE" != "active" ]; then
+      echo "The services are not fully up. Check the logs:"
+      echo "  sudo journalctl -u firewall-manager-web -f"
+      echo ""
+    fi
+    echo "Access the web UI: https://<this-server>:443"
+    echo "Log in as 'admin' and change the password immediately after first login."
     echo ""
   ;;
   abort-upgrade|abort-remove|abort-deconfigure)
