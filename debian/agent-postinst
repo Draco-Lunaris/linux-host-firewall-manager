@@ -2,7 +2,17 @@
 set -euo pipefail
 
 # agent-postinst — linux-firewall-manager-agent
-# Runs after the agent .deb is installed or upgraded.
+# Runs after the .deb is unpacked, so shipped files exist. All file work
+# happens here (the debconf config script only collects answers, since it
+# runs before unpack).
+#
+# First install is turnkey: reads the debconf answers (manager URL, FQDN,
+# enrollment token), writes /etc/firewall-agent/config.toml from the
+# shipped example, persists the token to a root-only file, and starts the
+# daemon — which enrolls immediately when a token is present. Upgrades
+# keep the existing config and token untouched.
+
+esc() { printf '%s' "$1" | sed -e 's/[&\\|]/\\&/g'; }
 
 case "$1" in
   configure)
@@ -10,26 +20,78 @@ case "$1" in
     # Owned by root — the service runs as root for CAP_NET_ADMIN/CAP_NET_RAW.
     mkdir -p /etc/firewall-agent
     mkdir -p /var/log/firewall-agent
-
     chmod 0750 /etc/firewall-agent
     chmod 0750 /var/log/firewall-agent
 
-    # Reload systemd so the new firewall-agent.service is picked up
+    # Fresh install only — never clobber an existing (possibly hand-edited
+    # or already-enrolled) config on upgrade or reinstall.
+    if [ ! -f /etc/firewall-agent/config.toml ]; then
+      MANAGER_URL=""
+      FQDN=""
+      TOKEN=""
+      if [ -r /usr/share/debconf/confmodule ]; then
+        . /usr/share/debconf/confmodule
+        db_get firewall-agent/manager-url  || true
+        MANAGER_URL="${RET:-}"
+        db_get firewall-agent/fqdn         || true
+        FQDN="${RET:-}"
+        db_get firewall-agent/enroll-token || true
+        TOKEN="${RET:-}"
+      fi
+
+      # Default the FQDN to the system's FQDN when not supplied.
+      if [ -z "$FQDN" ]; then
+        FQDN="$(hostname -f 2>/dev/null || hostname 2>/dev/null || true)"
+      fi
+
+      cp /usr/share/firewall-agent/agent.example.toml /etc/firewall-agent/config.toml
+      if [ -n "$MANAGER_URL" ]; then
+        sed -i "s|^manager_url = .*|manager_url = \"$(esc "$MANAGER_URL")\"|" /etc/firewall-agent/config.toml
+      fi
+      if [ -n "$FQDN" ]; then
+        sed -i "s|^fqdn = .*|fqdn = \"$(esc "$FQDN")\"|" /etc/firewall-agent/config.toml
+      fi
+      chmod 0640 /etc/firewall-agent/config.toml
+
+      # Persist the enrollment token to a root-only file so the daemon can
+      # enroll without the secret appearing in a service file or process
+      # list. Clear it from the debconf database immediately.
+      if [ -n "$TOKEN" ]; then
+        printf '%s' "$TOKEN" > /etc/firewall-agent/enroll.token
+        chmod 0600 /etc/firewall-agent/enroll.token
+        db_set firewall-agent/enroll-token "" || true
+      fi
+    fi
+
+    # Reload systemd and start (or restart) the daemon. Do not fail the
+    # install if the service cannot come up yet; the summary reports state.
     systemctl daemon-reload
+    systemctl enable firewall-agent.service
+    systemctl restart firewall-agent.service || true
+
+    STATE="$(systemctl is-active firewall-agent.service 2>/dev/null || true)"
 
     echo ""
     echo "=== linux-firewall-manager-agent installed ==="
     echo ""
-    echo "Next steps:"
-    echo "  1. Configure the agent:"
-    echo "     sudo nano /etc/firewall-agent/agent.toml"
+    echo "Service state: ${STATE}"
     echo ""
-    echo "  2. Enroll with the manager (obtain an enrollment token from the"
-    echo "     manager web UI), then enable and start the service:"
-    echo "     sudo systemctl enable --now firewall-agent.service"
+
+    if [ -f /etc/firewall-agent/enroll.token ]; then
+      echo "Enrollment will start automatically (a token was supplied)."
+      echo "Approve this host in the manager web UI (Hosts > Pending)."
+    else
+      echo "To enroll, get a one-time token from the manager web UI"
+      echo "(Hosts > Enroll), then either:"
+      echo "  • drop it in place and restart the agent:"
+      echo "      echo '<TOKEN>' | sudo tee /etc/firewall-agent/enroll.token"
+      echo "      sudo systemctl restart firewall-agent"
+      echo "  • or enroll directly:"
+      echo "      sudo fw-agent enroll --manager-url <URL> --token <TOKEN> --fqdn <FQDN>"
+    fi
     echo ""
-    echo "  3. Check status:"
-    echo "     journalctl -u firewall-agent -f"
+    echo "Watch enrollment and check-in progress:"
+    echo "  sudo journalctl -u firewall-agent -f"
     echo ""
   ;;
   abort-upgrade|abort-remove|abort-deconfigure)

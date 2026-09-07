@@ -1,0 +1,23 @@
+#!/bin/bash
+set -euo pipefail
+
+# agent-config — linux-firewall-manager-agent
+# Debconf config script. Runs BEFORE the package is unpacked, so it must
+# not touch any shipped file (/usr/share/firewall-agent/... does not exist
+# yet) — it only collects answers. All file work happens in agent-postinst,
+# which runs after unpack.
+
+# On upgrade/reinstall the existing config is kept — do not re-ask.
+if [ -f /etc/firewall-agent/config.toml ]; then
+  exit 0
+fi
+
+if [ -r /usr/share/debconf/confmodule ]; then
+  . /usr/share/debconf/confmodule
+  db_input high firewall-agent/manager-url || true
+  db_input high firewall-agent/fqdn || true
+  db_input high firewall-agent/enroll-token || true
+  db_go || true
+fi
+
+exit 0

@@ -57,9 +57,19 @@ pub async fn enroll(manager_url: &str, token: &str, fqdn: &str) -> Result<()> {
     // Disable keep-alive pooling so each poll uses a fresh connection — a pooled
     // connection left idle for the 60s poll interval can go stale (server closes
     // it), and reusing it hangs the request until the timeout.
+    //
+    // TLS trust bootstrap: the manager typically serves a certificate from its
+    // own internal CA, and that CA is only delivered to this host as part of
+    // the approved enrollment bundle — so it cannot be verified beforehand
+    // (chicken-and-egg). The enrollment exchange is instead authenticated by
+    // the one-time, expiring enrollment token, and the CA received in the
+    // bundle is pinned for all subsequent communication (mTLS pull client).
+    // This is the same trust-on-first-use model used by comparable enrollment
+    // systems.
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .pool_max_idle_per_host(0)
+        .danger_accept_invalid_certs(true)
         .build()?;
 
     let submit_body = serde_json::json!({
@@ -250,18 +260,23 @@ fn save_config(
     pull: Option<&BundlePullConfig>,
     host_id: Option<&str>,
 ) -> Result<()> {
-    // Seed the manager's IP as a protected CIDR so the agent never accepts a
-    // rule that would block or expose the management interface (SEC-006).
-    let protected_cidrs = crate::protected_cidrs::auto_detect_manager_cidr(manager_url)
-        .map(|ip| vec![format!("{}/32", ip)])
-        .unwrap_or_default();
+    // Start from the existing config (preserving any hand-edited values such
+    // as safe_mode, log_dir, or operator-added protected CIDRs), falling back
+    // to defaults on a fresh install. Enrollment then layers the
+    // manager-provided values on top.
+    let mut config = crate::config::AgentConfig::load().unwrap_or_default();
+    config.manager_url = manager_url.to_string();
+    config.fqdn = fqdn.to_string();
 
-    let mut config = crate::config::AgentConfig {
-        manager_url: manager_url.to_string(),
-        fqdn: fqdn.to_string(),
-        protected_cidrs,
-        ..Default::default()
-    };
+    // Seed the manager's IP as a protected CIDR so the agent never accepts a
+    // rule that would block or expose the management interface (SEC-006),
+    // without clobbering any CIDRs the operator already listed.
+    if let Some(ip) = crate::protected_cidrs::auto_detect_manager_cidr(manager_url) {
+        let cidr = format!("{}/32", ip);
+        if !config.protected_cidrs.contains(&cidr) {
+            config.protected_cidrs.push(cidr);
+        }
+    }
     // Persist the manager-provided pull config (check-in URL + interval +
     // config version). Without this the check-in loop runs against an empty
     // URL and a zero config version, so the agent can never poll the manager

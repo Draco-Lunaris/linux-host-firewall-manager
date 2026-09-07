@@ -99,12 +99,35 @@ password immediately after first login.
 ### Installing the agent on a managed host
 
 The manager and agent ship as **separate `.deb` packages**. Install the
-agent on each host you want to centrally manage:
+agent on each host you want to centrally manage. During the install you
+will be prompted for the manager URL, this host's FQDN, and (optionally) a
+one-time enrollment token from the manager web UI (Hosts > Enroll):
 
 ```bash
 # On each managed host (not the manager host):
 sudo dpkg -i linux-firewall-manager-agent_<version>-1_amd64.deb
-sudo systemctl enable --now firewall-agent.service
+```
+
+The install is turnkey: the answers are written to
+`/etc/firewall-agent/config.toml`, the token (if supplied) is stored
+root-only at `/etc/firewall-agent/enroll.token`, and the service starts
+and enrolls immediately — you only need to **approve the host** in the
+manager web UI (Hosts > Pending).
+
+To pre-answer the prompts non-interactively (e.g. automation):
+
+```bash
+echo 'firewall-agent firewall-agent/manager-url string https://fwm.example.com:443' | sudo debconf-set-selections
+echo 'firewall-agent firewall-agent/fqdn string host.example.com' | sudo debconf-set-selections
+echo 'firewall-agent firewall-agent/enroll-token password <TOKEN>' | sudo debconf-set-selections
+sudo DEBIAN_FRONTEND=noninteractive dpkg -i linux-firewall-manager-agent_<version>-1_amd64.deb
+```
+
+If you skipped the token at install time, drop it in place and restart:
+
+```bash
+echo '<TOKEN>' | sudo tee /etc/firewall-agent/enroll.token
+sudo systemctl restart firewall-agent
 ```
 
 The agent pulls its assigned policy from the manager over mTLS on a

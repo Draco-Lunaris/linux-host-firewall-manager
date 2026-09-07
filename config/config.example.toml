@@ -4,6 +4,10 @@ title = "Linux Firewall Manager Configuration"
 url = "postgres://firewall_manager:your_secure_password@localhost/firewall_manager"
 
 [server]
+# Bind address for the web UI. NOTE: the manager also hands agents
+# https://{host}:{agent_port} at enrollment, so this must be a specific IP —
+# "0.0.0.0" (bind-all) would give agents an unusable URL. The .deb postinst
+# sets it to the machine's primary IP on first install.
 host = "0.0.0.0"
 port = 443
 
