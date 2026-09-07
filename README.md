@@ -67,33 +67,34 @@ cd frontend && npm ci && npm run build
 ## Quick Start
 
 ```bash
-# 1. Install the .deb package
+# Install the .deb package (pulls in PostgreSQL 16 automatically)
 sudo dpkg -i linux-firewall-manager_*.deb
 sudo apt-get install -f  # fix dependencies
-
-# 2. Configure PostgreSQL
-sudo -u postgres psql <<EOF
-CREATE DATABASE firewall_manager;
-CREATE USER firewall_manager WITH PASSWORD 'your_secure_password';
-GRANT ALL PRIVILEGES ON DATABASE firewall_manager TO firewall_manager;
-EOF
-
-# 3. Edit the config
-sudo nano /etc/firewall-manager/config.toml
-
-# 4. Start services
-sudo systemctl enable --now firewall-manager.target
-
-# 5. Retrieve the auto-generated admin password
-sudo journalctl -u firewall-manager-web | grep 'INITIAL ADMIN PASSWORD' -A 4
-
-# 6. Access the web UI
-#    https://your-server-ip:443
-#    Username: admin
-#    Password: (from step 5)
 ```
 
-The admin password is generated on first start and shown once in the logs. Change it immediately after first login.
+The first install is turnkey — the package creates the `firewall_manager`
+PostgreSQL role and database with a random 25-character password, writes
+`/etc/firewall-manager/config.toml` with that password, generates the JWT
+keys and a self-signed TLS certificate, and starts the web + worker services.
+
+At the end of the install, the one-time initial admin password is printed:
+
+```
+========================================
+  INITIAL ADMIN PASSWORD (shown once)
+  Username: admin
+  Password: <password>
+========================================
+```
+
+Save it now — it is shown only once. If you missed it:
+
+```bash
+sudo journalctl -u firewall-manager-web | grep -A 3 'INITIAL ADMIN PASSWORD'
+```
+
+Then open `https://<server-ip>:443`, log in as `admin`, and change the
+password immediately after first login.
 
 ### Installing the agent on a managed host
 
