@@ -43,6 +43,26 @@ case "$1" in
       chown firewall-manager:firewall-manager /etc/firewall-manager/config.toml
     fi
 
+    # Fresh install: make the shipped example config usable for agent
+    # enrollment. The manager hands agents https://{server.host}:{agent_port}
+    # at enrollment, so the example's bind-all "0.0.0.0" would produce an
+    # unusable agent URL, and the default agent_tls_sans lack the real
+    # hostname/IP. Set the primary IP as the host and populate the SANs
+    # (FQDN, primary IP, loopback entries).
+    if [ "$FRESH_INSTALL" -eq 1 ]; then
+      PRIMARY_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") {print $(i + 1); exit}}' || true)"
+      if [ -n "$PRIMARY_IP" ]; then
+        sed -i "s|^host = .*|host = \"${PRIMARY_IP}\"|" /etc/firewall-manager/config.toml
+        HOST_FQDN="$(hostname -f 2>/dev/null || true)"
+        SANS="\"localhost\", \"127.0.0.1\""
+        if [ -n "$HOST_FQDN" ] && [ "$HOST_FQDN" != "localhost" ]; then
+          SANS="\"${HOST_FQDN}\", ${SANS}"
+        fi
+        SANS="\"${PRIMARY_IP}\", ${SANS}"
+        sed -i "s|^agent_tls_sans = .*|agent_tls_sans = [${SANS}]|" /etc/firewall-manager/config.toml
+      fi
+    fi
+
     # Generate JWT keys if not present
     if [ ! -f /etc/firewall-manager/jwt/signing.pem ]; then
       openssl genpkey -algorithm ed25519 -out /etc/firewall-manager/jwt/signing.pem

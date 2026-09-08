@@ -10,6 +10,12 @@ case "$1" in
     rm -rf /etc/firewall-agent
     rm -rf /var/log/firewall-agent
 
+    # Drop debconf entries on purge.
+    if [ -r /usr/share/debconf/confmodule ]; then
+      . /usr/share/debconf/confmodule
+      db_purge || true
+    fi
+
     systemctl daemon-reload 2>/dev/null || true
   ;;
   remove)

@@ -103,8 +103,11 @@ async fn main() -> anyhow::Result<()> {
 /// Run the agent daemon — starts the pull loop (the only apply path in the
 /// pull model; the manager never contacts the agent).
 async fn run_daemon() -> anyhow::Result<()> {
-    let cfg = config::AgentConfig::load()
-        .ok_or_else(|| anyhow::anyhow!("Agent not configured — run 'fw-agent enroll' first"))?;
+    // Block until the agent is enrolled (host_id + mTLS certs present). If a
+    // one-time token is present, enroll in-process; otherwise wait for a token
+    // to appear or for a manual `fw-agent enroll` to complete. This keeps the
+    // daemon from crash-looping before enrollment.
+    let cfg = wait_for_enrollment().await?;
 
     let host_id = cfg
         .host_id
@@ -157,6 +160,104 @@ async fn run_daemon() -> anyhow::Result<()> {
     tracing::info!("Agent shutting down");
 
     Ok(())
+}
+
+/// Path to the one-time enrollment token written by the installer. The daemon
+/// reads it to enroll in-process, so the secret never appears in a service
+/// file or process list.
+const ENROLL_TOKEN_PATH: &str = "/etc/firewall-agent/enroll.token";
+
+/// Block until the agent is enrolled (a valid host_id plus the mTLS client
+/// cert, key, and CA are present). While not enrolled:
+///   • if a token is present at [ENROLL_TOKEN_PATH], run enrollment in-process
+///     (it writes the certs and updates the config, then we reload);
+///   • otherwise wait for a token to appear or for a manual `fw-agent enroll`
+///     to complete.
+///
+/// This never returns `Err` for the "not enrolled yet" state — the daemon
+/// blocks here rather than exiting, so systemd does not crash-loop it before
+/// enrollment.
+async fn wait_for_enrollment() -> anyhow::Result<config::AgentConfig> {
+    let mut hint_logged = false;
+
+    loop {
+        let cfg = match config::AgentConfig::load() {
+            Some(c) => c,
+            None => {
+                if !hint_logged {
+                    tracing::warn!(
+                        "No agent config at {} — waiting for it to appear",
+                        config::AgentConfig::config_path()
+                    );
+                    hint_logged = true;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+                continue;
+            }
+        };
+
+        if is_enrolled(&cfg) {
+            tracing::info!("Agent enrolled — starting pull loop");
+            return Ok(cfg);
+        }
+
+        match std::fs::read_to_string(ENROLL_TOKEN_PATH) {
+            Ok(token) if !token.trim().is_empty() => {
+                let manager_url = cfg.manager_url.clone();
+                let fqdn = cfg.fqdn.clone();
+                if manager_url.is_empty() || fqdn.is_empty() {
+                    tracing::warn!(
+                        "Enrollment token present but manager_url/fqdn not set in {} — set them to enroll",
+                        config::AgentConfig::config_path()
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    continue;
+                }
+                tracing::info!("Starting enrollment with {}", manager_url);
+                match enrollment::enroll(&manager_url, token.trim(), &fqdn).await {
+                    // Enrollment wrote the certs and updated the config on
+                    // disk — loop to reload and confirm enrollment.
+                    Ok(()) => continue,
+                    Err(e) => {
+                        tracing::error!("Enrollment failed: {e} — retrying in 60s");
+                        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                        continue;
+                    }
+                }
+            }
+            _ => {
+                if !hint_logged {
+                    tracing::info!(
+                        "Not enrolled. Provide a token at {} (or run 'fw-agent enroll --manager-url <URL> --token <TOKEN> --fqdn <FQDN>') to enroll.",
+                        ENROLL_TOKEN_PATH
+                    );
+                    hint_logged = true;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                continue;
+            }
+        }
+    }
+}
+
+/// Enrolled = a parseable host_id is set AND the mTLS client cert, key, and CA
+/// are present on disk.
+fn is_enrolled(cfg: &config::AgentConfig) -> bool {
+    let has_host_id = cfg
+        .host_id
+        .as_ref()
+        .and_then(|s| uuid::Uuid::parse_str(s).ok())
+        .is_some();
+    if !has_host_id {
+        return false;
+    }
+    let d = &cfg.cert_dir;
+    let cert = std::path::Path::new(&format!("{d}/server.pem")).exists()
+        || std::path::Path::new(&format!("{d}/agent.pem")).exists();
+    let key = std::path::Path::new(&format!("{d}/server.key.pem")).exists()
+        || std::path::Path::new(&format!("{d}/agent.key.pem")).exists();
+    let ca = std::path::Path::new(&format!("{d}/ca.pem")).exists();
+    cert && key && ca
 }
 
 async fn status_report() -> anyhow::Result<()> {

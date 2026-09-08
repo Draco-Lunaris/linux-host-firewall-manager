@@ -1,0 +1,38 @@
+# Linux Host Firewall Manager — agent configuration
+#
+# Installed at /etc/firewall-agent/config.toml.
+#
+# Required fields are active below. Optional fields are shown with their
+# built-in defaults so you can see and tune them. Fields marked "set by
+# enrollment" are populated automatically when the agent enrolls with the
+# manager — leave them commented out.
+
+# --- Required -------------------------------------------------------------
+# The manager's public URL (web UI + enrollment API, port 443).
+manager_url = "https://fwm.example.com:443"
+# This host's fully-qualified domain name (used as the certificate CN).
+fqdn = "host.example.com"
+
+# --- Defaults (active) ----------------------------------------------------
+# Where the agent stores its mTLS certificates.
+cert_dir = "/etc/firewall-agent/certs"
+# Where the agent stores its configuration.
+config_dir = "/etc/firewall-agent"
+# Where the agent writes its logs.
+log_dir = "/var/log/firewall-agent"
+# Enter safe mode (revert to a known-good ruleset) if a policy apply fails.
+safe_mode_enabled = false
+# How long to wait in safe mode before giving up (seconds).
+safe_mode_timeout_secs = 1800
+# CIDRs the agent must never block or expose (the manager's address is added
+# automatically at enrollment).
+protected_cidrs = []
+
+# --- Set by enrollment (leave commented out) ------------------------------
+# host_id = ""            # manager-assigned host identity (UUID)
+
+[pull]
+# How often the agent checks in with the manager (seconds).
+check_in_interval_secs = 900
+# manager_agent_url = ""  # manager's mTLS agent API (port 8443), set at enrollment
+# config_version = 0      # last applied policy version, set at enrollment

@@ -1,0 +1,30 @@
+Template: firewall-agent/manager-url
+Type: string
+Default:
+Description: Firewall manager URL
+ The URL of the firewall manager, including scheme and port
+ (e.g. https://fwm.example.com:443). The agent uses this to enroll and to
+ pull its assigned policy.
+ .
+ Leave empty to configure it later by editing
+ /etc/firewall-agent/config.toml.
+
+Template: firewall-agent/fqdn
+Type: string
+Default:
+Description: Host FQDN
+ The fully-qualified domain name of this host. It is used as the
+ certificate common name during enrollment.
+ .
+ Leave empty to use the system's FQDN.
+
+Template: firewall-agent/enroll-token
+Type: password
+Default:
+Description: Enrollment token
+ The one-time enrollment token shown in the manager web UI (Hosts >
+ Enroll). If provided, enrollment starts immediately after install and
+ you only need to approve the host in the manager.
+ .
+ Leave empty to enroll later with:
+   sudo fw-agent enroll --manager-url <URL> --token <TOKEN> --fqdn <FQDN>

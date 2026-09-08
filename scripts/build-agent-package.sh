@@ -34,6 +34,7 @@ rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}/DEBIAN"
 mkdir -p "${BUILD_DIR}/usr/local/bin"
 mkdir -p "${BUILD_DIR}/lib/systemd/system"
+mkdir -p "${BUILD_DIR}/usr/share/firewall-agent"
 
 # Agent binary
 cp target/release/fw-agent "${BUILD_DIR}/usr/local/bin/"
@@ -41,13 +42,17 @@ cp target/release/fw-agent "${BUILD_DIR}/usr/local/bin/"
 # Agent systemd unit
 cp systemd/firewall-agent.service "${BUILD_DIR}/lib/systemd/system/"
 
+# Fully-populated example config (the installer seeds /etc/firewall-agent/
+# config.toml from this on a fresh install).
+cp config/agent.example.toml "${BUILD_DIR}/usr/share/firewall-agent/agent.example.toml"
+
 # DEBIAN/control
 cat > "${BUILD_DIR}/DEBIAN/control" << EOF
 Package: ${PACKAGE_NAME}
 Version: ${VERSION}-${RELEASE}
 Architecture: amd64
 Maintainer: Echo <echo@moon-dragon.us>
-Depends: openssl, libssl3, libc6 (>= 2.39)
+Depends: openssl, libssl3, libc6 (>= 2.39), debconf
 Recommends: gnupg
 Section: admin
 Priority: optional
@@ -63,7 +68,14 @@ Description: Linux Host Firewall Manager — per-host agent
  and is installed separately on the manager host.
 EOF
 
-# DEBIAN/postinst (creates /etc/firewall-agent, /var/log/firewall-agent)
+# DEBIAN/config (debconf: prompt for manager URL / FQDN / token, write config)
+cp debian/agent-config "${BUILD_DIR}/DEBIAN/config"
+chmod 755 "${BUILD_DIR}/DEBIAN/config"
+
+# DEBIAN/templates (debconf question definitions)
+cp debian/agent-templates "${BUILD_DIR}/DEBIAN/templates"
+
+# DEBIAN/postinst (starts the daemon, prints a state-aware summary)
 cp debian/agent-postinst "${BUILD_DIR}/DEBIAN/postinst"
 chmod 755 "${BUILD_DIR}/DEBIAN/postinst"
 
