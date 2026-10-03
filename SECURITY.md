@@ -14,8 +14,8 @@ A useful report includes:
 
 ## What to expect
 
-- An acknowledgement within [N business days].
-- An assessment, and a plan for a fix, within [N days].
+- An acknowledgement within [10 business days].
+- An assessment, and a plan for a fix, within [20 days].
 - A published advisory once a fix is released, with credit to the reporter unless they ask otherwise.
 
 ## Supported versions
